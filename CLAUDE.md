@@ -42,7 +42,11 @@ never guesses, and the AI layer never touches raw XML directly.
   Mocha dependency). Run with `npm test`. A single file: `node --test path/to.test.js`.
 - XML parsing: `fast-xml-parser` (v5+; v4 pinned versions have a known moderate
   advisory in `XMLBuilder`, which this project doesn't use, but v5 avoids it anyway)
-- AI provider (Phase 4): `@anthropic-ai/sdk`, gated behind `ANTHROPIC_API_KEY`
+- AI provider (Phase 4): `@anthropic-ai/sdk`. Model default `claude-opus-4-8`
+  (override via `ZEN2INTUNE_AI_MODEL`). Runs for real whenever credentials are
+  resolvable (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, or an `ant auth login`
+  profile); otherwise throws `AiProviderNotConfiguredError` — see
+  `src/ai/anthropicProvider.js` and NEEDS_REVIEW.md for how that's detected.
 
 ## Commands
 

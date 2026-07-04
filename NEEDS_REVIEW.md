@@ -120,6 +120,54 @@ What this phase deliberately does **not** produce, and why - all surfaced as
   app in a test tenant (Graph Explorer or an SDK) and confirm the payload is accepted,
   and manually fill every field this phase left out.
 
+## Phase 4 - AI interpretation layer
+
+- `src/ai/anthropicProvider.js` calls the real `@anthropic-ai/sdk` Node SDK
+  (`^0.110.0`) - it has **not been exercised against the live Anthropic API**
+  in this environment. There is no `ANTHROPIC_API_KEY` or CLI-managed OAuth
+  profile configured here, and spending a user's API credits without explicit
+  request would be inappropriate. Tests cover prompt construction and
+  response-parsing logic directly, plus the full request/response plumbing
+  through an injected fake SDK client (see `test/ai.test.js`) - the only thing
+  not exercised is an actual network round trip to Anthropic's servers.
+- **The "not configured" detection is a string match on the SDK's current
+  error wording, verified empirically, not a documented error type.** I
+  initially assumed (incorrectly, from memory) that `new Anthropic()` throws
+  synchronously when no credentials are found. I verified this directly by
+  running it in this sandboxed environment (which genuinely has no
+  credentials) and found it does *not* throw at construction - `apiKey` is
+  just left `null`. The actual failure happens client-side (no network call)
+  inside `messages.create()`, as a plain `Error` (not a subclass of
+  `Anthropic.AuthenticationError` or `Anthropic.AnthropicError`) with the
+  message "Could not resolve authentication method...". `interpretBundle`
+  matches on that substring to raise `AiProviderNotConfiguredError`. If a
+  future SDK upgrade changes that wording, detection silently stops working -
+  the underlying error still propagates (nothing is swallowed), it just won't
+  be relabeled with the friendlier error type. Re-verify this string against
+  the installed SDK version if `@anthropic-ai/sdk` is upgraded.
+- `isConfigured()` is explicitly documented as a **best-effort hint only** -
+  it checks `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` env vars and cannot
+  see a CLI-managed OAuth profile or Workload Identity Federation credentials.
+  Do not treat a `false` from it as proof that `interpretBundle` will fail.
+- Before relying on this layer for real bundles: set `ANTHROPIC_API_KEY` and
+  run a real end-to-end call against a handful of representative structured
+  bundles, then spot-check the model's suggested mappings - the model can
+  still be wrong or uncertain, which is why its output is a *suggestion*
+  (`suggestedMapping` + `confidence` + `rationale`) rather than a direct
+  write into the Intune output. Nothing in the current codebase actually
+  wires `interpretBundle`'s output into `src/intune/convertBundle.js` yet -
+  that integration (annotating a structured bundle before conversion, per the
+  architecture's stage order) was not built in this pass.
+- Model default is `claude-opus-4-8`, overridable via `ZEN2INTUNE_AI_MODEL` -
+  no specific model has been requested or locked in for this project, so this
+  follows the general default for new Claude-powered application code.
+- No prompt-injection hardening has been done beyond basic structural
+  separation (the structured bundle is passed as a clearly delimited JSON
+  block in the user turn, not concatenated into free-form instruction text,
+  and the system prompt explicitly tells the model not to invent new
+  needsReview items). If bundle content ever originates from an untrusted
+  source, review this before production use.
+
 ## General
 
 - No real ZENworks bundle data, hostnames, or environment paths were used anywhere in
