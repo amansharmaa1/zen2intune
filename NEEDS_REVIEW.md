@@ -62,6 +62,64 @@ type vocabulary the parser already uses. Two design decisions worth knowing abou
   completeness of a construct we don't understand isn't derivable - it shows up in
   `needsReview` instead.
 
+## Phase 3 - Intune conversion engine
+
+All Graph field names, resource types (`@odata.type` values), and enum members used
+in `src/intune/graphEnums.js` and `src/intune/convertBundle.js` were checked against
+Microsoft Learn documentation (`win32LobApp`, `win32LobAppRule` and its four concrete
+subtypes, `win32LobAppInstallExperience`, `win32LobAppReturnCode`,
+`win32LobAppMsiInformation`, `windowsArchitecture`) on 2026-07-04, not recalled from
+memory alone. See the doc URLs in `src/intune/graphEnums.js`'s comments.
+
+What this phase deliberately does **not** produce, and why - all surfaced as
+`needsReview` entries on the conversion output rather than guessed at:
+
+- **No detection rule is ever generated.** Intune's detection rule types
+  (`win32LobAppProductCodeRule`, `win32LobAppRegistryRule`,
+  `win32LobAppFileSystemRule`, `win32LobAppPowerShellScriptRule`) all need data our
+  structured schema doesn't carry (e.g. an MSI product code - Phase 1's parser never
+  captured one, since the synthetic schema's `InstallMsi` action only has a source
+  file path, not a product code). Every conversion always emits an empty `rules`
+  detection set plus a `no_detection_rule_derivable` review item. This is a real gap
+  that needs either a Phase 1 schema extension (once a real ZENworks sample confirms
+  whether product codes are actually present in real exports) or a human/AI-supplied
+  detection rule.
+- **`minimumSupportedWindowsRelease` is never set.** Graph documents this as a plain
+  string with a single example (`Windows11_23H2`) and no published enumeration of
+  valid values, so there's no verified way to map a ZENworks `OperatingSystem`
+  condition value (e.g. `"Windows10"`) onto it. Always flagged when that condition
+  exists.
+- **`installExperience` (`runAsAccount`, `deviceRestartBehavior`) is never set.**
+  Nothing in the structured schema carries a run-as-context or restart-behavior
+  signal. Always flagged.
+- **Dependencies are never converted.** Graph models app-to-app dependencies as a
+  separate `mobileAppDependency`-style relationship on the app resource, not a
+  `win32LobApp` property (confirmed by its absence from the full property list this
+  phase fetched from Microsoft Learn) - that relationship API was out of scope here.
+  Always flagged when the bundle has dependencies.
+- **A `FileExists` condition using ZENworks' `notExists` operator has no direct
+  target.** `win32LobAppFileSystemRule`'s `operationType` enum has `exists` but no
+  `doesNotExist` (registry rules do have `doesNotExist`; file system rules don't -
+  this asymmetry is real, per the docs, not an oversight on my part to fix). Flagged
+  rather than inverted via a guess.
+- **A stage with zero or more than one command-line-capable action never produces a
+  command line.** Intune's win32LobApp model has exactly one `installCommandLine` and
+  one `uninstallCommandLine`; when a ZENworks ActionSet has more than one action that
+  could plausibly run something, this project does not guess which one (or what
+  combined order) belongs in that single string.
+- **`RunScript` and `InstallFiles` actions never produce a command line.** A
+  `RunScript` action's body is inline text, not a file on disk to invoke, and turning
+  it into a real command line means packaging it as a script file first (not
+  implemented). `InstallFiles` is a copy operation with no natural single executable
+  to invoke.
+- No PowerShell cmdlets of any kind (Graph SDK or otherwise) are generated or
+  referenced anywhere in this codebase - the engine only produces the JSON payload,
+  not automation scripts.
+- No live calls were made against a real Microsoft Graph endpoint or Intune tenant -
+  only the JSON shape was checked against documentation. Before real use, create the
+  app in a test tenant (Graph Explorer or an SDK) and confirm the payload is accepted,
+  and manually fill every field this phase left out.
+
 ## General
 
 - No real ZENworks bundle data, hostnames, or environment paths were used anywhere in
