@@ -45,6 +45,23 @@ is designed to degrade safely (flag as `unknown_*_type` warning, pass the raw ty
 through unchanged) rather than fail, but the vocabulary should be expanded once real
 samples are available.
 
+## Phase 2 - Structured JSON schema
+
+No new external/unverifiable facts were introduced in this phase - it's a pure,
+deterministic restructuring of Phase 1's output plus flagging against the same known-
+type vocabulary the parser already uses. Two design decisions worth knowing about
+(not uncertainties, just choices - see inline comments where noted):
+
+- The validator in `src/schema/jsonSchemaValidator.js` supports only a small subset
+  of JSON Schema (`type`, `required`, `properties`, `items`, `enum`). It's sufficient
+  for this project's own schema but is not a general-purpose validator - don't reuse
+  it for arbitrary external JSON Schema documents without extending it first.
+- An action's `complete` flag is only ever `true` for a *recognized* action kind with
+  all of that kind's required fields present (see `REQUIRED_FIELDS_BY_ACTION_KIND` in
+  `src/schema/normalize.js`). Unrecognized kinds are always `complete: false` since
+  completeness of a construct we don't understand isn't derivable - it shows up in
+  `needsReview` instead.
+
 ## General
 
 - No real ZENworks bundle data, hostnames, or environment paths were used anywhere in
