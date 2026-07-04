@@ -35,10 +35,31 @@ never guesses, and the AI layer never touches raw XML directly.
 
 ## Tech Stack
 
-- Node.js backend
-- Plain JS/TS for the parser (no framework decisions locked in yet — don't assume
-  Express, NestJS, a specific test runner, or a specific XML library until a choice
-  is made and documented here)
+- Node.js backend (targets Node >=20), ESM (`"type": "module"`)
+- Plain JS (no TypeScript build step adopted yet; no web framework locked in — don't
+  assume Express/NestJS/etc. until a choice is made and documented here)
+- Test runner: Node's built-in `node:test` + `node:assert/strict` (no Jest/Vitest/
+  Mocha dependency). Run with `npm test`. A single file: `node --test path/to.test.js`.
+- XML parsing: `fast-xml-parser` (v5+; v4 pinned versions have a known moderate
+  advisory in `XMLBuilder`, which this project doesn't use, but v5 avoids it anyway)
+- AI provider (Phase 4): `@anthropic-ai/sdk`, gated behind `ANTHROPIC_API_KEY`
+
+## Commands
+
+- Install dependencies: `npm install`
+- Run all tests: `npm test` (equivalent to `node --test`)
+- Run one test file: `node --test test/parser.test.js`
+
+## Repository Layout
+
+- `src/parser/` — Phase 1, deterministic XML parser (no AI)
+- `src/schema/` — Phase 2, canonical structured JSON schema + validation/normalization
+- `src/intune/` — Phase 3, Intune Win32 app conversion engine
+- `src/ai/` — Phase 4, AI interpretation layer (only stage allowed to call an LLM)
+- `test/` — test files (`*.test.js`, run via `node:test`) and `test/fixtures/`
+  (synthetic sample bundles only — never real ZENworks data)
+- `NEEDS_REVIEW.md` — running log of unverified assumptions and unimplemented edges;
+  check this before trusting any output against real data
 
 ## Coding Rules
 

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SYNTHETIC SAMPLE DATA - missing required Guid, to test the fail-loudly path. -->
+<Bundle>
+  <Name>No Guid App</Name>
+  <Type>Install</Type>
+  <ActionSets>
+    <ActionSet type="Install">
+      <Action type="InstallMsi" order="1">
+        <Path>%ZENCACHE%\NoGuid\App.msi</Path>
+        <SuccessCodes>0</SuccessCodes>
+      </Action>
+    </ActionSet>
+  </ActionSets>
+</Bundle>

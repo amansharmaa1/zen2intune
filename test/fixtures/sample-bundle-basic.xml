@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SYNTHETIC SAMPLE DATA - for Zen2Intune AI development/testing only.
+  This is NOT a real ZENworks bundle export. The schema below is a best-effort
+  approximation; it has not been verified against real ZENworks exports or
+  official Micro Focus/OpenText documentation. See NEEDS_REVIEW.md.
+-->
+<Bundle>
+  <Name>Sample Application 1.0</Name>
+  <Guid>b1a2c3d4-1111-2222-3333-444455556666</Guid>
+  <Type>Install</Type>
+  <Version>1.0.0</Version>
+
+  <Requirements>
+    <Filter type="OperatingSystem" operator="greaterOrEqual" value="Windows10" />
+    <Filter type="Architecture" operator="equals" value="x64" />
+    <Filter type="FileExists" operator="notExists" value="C:\Program Files\SampleApp\app.exe" />
+  </Requirements>
+
+  <Dependencies>
+    <Dependency type="Bundle" name="Prerequisite Runtime" guid="e5f6a7b8-0000-1111-2222-333344445555" required="true" />
+  </Dependencies>
+
+  <ActionSets>
+    <ActionSet type="Install">
+      <Action type="InstallMsi" order="1">
+        <Path>%ZENCACHE%\SampleApp\SampleApp.msi</Path>
+        <Arguments>/qn REBOOT=ReallySuppress</Arguments>
+        <SuccessCodes>0,3010</SuccessCodes>
+      </Action>
+      <Action type="RunScript" order="2">
+        <ScriptType>Batch</ScriptType>
+        <ScriptBody>echo post-install step</ScriptBody>
+        <SuccessCodes>0</SuccessCodes>
+      </Action>
+    </ActionSet>
+    <ActionSet type="Uninstall">
+      <Action type="InstallMsi" order="1">
+        <Path>%ZENCACHE%\SampleApp\SampleApp.msi</Path>
+        <Arguments>/x /qn</Arguments>
+        <SuccessCodes>0,3010</SuccessCodes>
+      </Action>
+    </ActionSet>
+  </ActionSets>
+</Bundle>

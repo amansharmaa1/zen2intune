@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SYNTHETIC SAMPLE DATA - deliberately malformed XML for testing failure handling. -->
+<Bundle>
+  <Name>Broken Bundle</Name>
+  <Guid>00000000-0000-0000-0000-000000000000</Guid>
+  <Type>Install</Type>
+  <ActionSets>
+    <ActionSet type="Install">
+      <Action type="InstallMsi" order="1">
+        <Path>%ZENCACHE%\Broken\Broken.msi</Path>
+      </Action>
+    </ActionSet>
+  </ActionSets>
+<!-- missing closing </Bundle> tag on purpose -->
