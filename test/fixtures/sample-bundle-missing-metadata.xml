@@ -1,14 +1,21 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- SYNTHETIC SAMPLE DATA - missing required Guid, to test the fail-loudly path. -->
-<Bundle>
-  <Name>No Guid App</Name>
-  <Type>Install</Type>
-  <ActionSets>
-    <ActionSet type="Install">
-      <Action type="InstallMsi" order="1">
-        <Path>%ZENCACHE%\NoGuid\App.msi</Path>
-        <SuccessCodes>0</SuccessCodes>
-      </Action>
-    </ActionSet>
-  </ActionSets>
-</Bundle>
+<!-- SYNTHETIC SAMPLE DATA - missing required UID, to test the fail-loudly path. -->
+<ns1:Bundle xmlns:ns1="http://novell.com/zenworks/datamodel/objects/bundles" xmlns="http://novell.com/zenworks/datamodel/objects/bundles">
+    <ns2:Name xmlns:ns2="http://novell.com/zenworks/datamodel/objects">No UID App</ns2:Name>
+    <ns2:SubType xmlns:ns2="http://novell.com/zenworks/datamodel/objects">Windows Bundle</ns2:SubType>
+    <ns2:ActionSets xmlns:ns2="http://novell.com/zenworks/datamodel/objects/actions">
+        <Id>3aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</Id>
+        <Type>Install</Type>
+        <Actions>
+            <Id>3bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb</Id>
+            <Type>Install MSI Action</Type>
+            <Data>
+                <ns3:MSIData xmlns:ns3="http://www.novell.com/ZENworks/Actions/v1.0" FileName="NoUidApp.msi">
+                    <Install>
+                        <CmdLine> /i "NoUidApp.msi" /qn</CmdLine>
+                    </Install>
+                </ns3:MSIData>
+            </Data>
+        </Actions>
+    </ns2:ActionSets>
+</ns1:Bundle>

@@ -1,22 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import path from 'node:path';
 
-import { parseBundleXml } from '../src/parser/parseBundle.js';
 import { normalizeBundle } from '../src/schema/normalize.js';
 import { validateStructuredBundle, BUNDLE_SCHEMA_VERSION } from '../src/schema/bundleSchema.js';
 import { validateAgainstSchema } from '../src/schema/jsonSchemaValidator.js';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-function fixture(name) {
-  return readFileSync(path.join(__dirname, 'fixtures', name), 'utf8');
-}
+import { legacyRawBasicBundle, legacyRawUnknownConstructsBundle } from './legacyRawBundles.js';
 
 test('normalizes a well-formed bundle into schema-valid structured JSON', () => {
-  const raw = parseBundleXml(fixture('sample-bundle-basic.xml'));
+  const raw = legacyRawBasicBundle();
   const structured = normalizeBundle(raw);
 
   const { valid, errors } = validateStructuredBundle(structured);
@@ -41,7 +32,7 @@ test('normalizes a well-formed bundle into schema-valid structured JSON', () => 
 });
 
 test('flags unrecognized conditions/dependencies/actions as not-recognized, and surfaces needsReview, while remaining schema-valid', () => {
-  const raw = parseBundleXml(fixture('sample-bundle-unknown-constructs.xml'));
+  const raw = legacyRawUnknownConstructsBundle();
   const structured = normalizeBundle(raw);
 
   const { valid, errors } = validateStructuredBundle(structured);

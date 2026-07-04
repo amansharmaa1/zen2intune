@@ -1,26 +1,45 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  SYNTHETIC SAMPLE DATA - exercises unrecognized/ambiguous constructs that the
-  parser should flag instead of guessing about.
+  SYNTHETIC SAMPLE DATA - fake values, real-shaped (see sample-bundle-basic.xml
+  header). Exercises requirement/action/action-set type values that are NOT in
+  the known vocabulary (src/parser/knownTypes.js), so the parser must flag them
+  rather than guess at their meaning.
 -->
-<Bundle>
-  <Name>Legacy Tool</Name>
-  <Guid>aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee</Guid>
-  <Type>Install</Type>
-
-  <Requirements>
-    <Filter type="CustomZenAppFingerprint" operator="equals" value="unknown-to-us" />
-  </Requirements>
-
-  <Dependencies>
-    <Dependency type="Bundle" guid="ffffffff-0000-1111-2222-333333333333" required="false" />
-  </Dependencies>
-
-  <ActionSets>
-    <ActionSet type="Install">
-      <Action type="RegistrySweep" order="1">
-        <Path>HKLM\Software\LegacyTool</Path>
-      </Action>
-    </ActionSet>
-  </ActionSets>
-</Bundle>
+<ns1:Bundle xmlns:ns1="http://novell.com/zenworks/datamodel/objects/bundles" xmlns="http://novell.com/zenworks/datamodel/objects/bundles">
+    <ns2:UID xmlns:ns2="http://novell.com/zenworks/datamodel/objects">33333333333333333333333333333333</ns2:UID>
+    <ns2:Name xmlns:ns2="http://novell.com/zenworks/datamodel/objects">Legacy Tool</ns2:Name>
+    <ns2:SubType xmlns:ns2="http://novell.com/zenworks/datamodel/objects">Windows Bundle</ns2:SubType>
+    <ns2:SysReqs xmlns:ns2="http://novell.com/zenworks/datamodel/objects/assignablecontent">
+        <ns3:SysReqs xmlns:ns3="http://www.novell.com/ZENworks/Reqs/v1.0" Conjunction="OR">
+            <Req Type="GroupReq">
+                <Data>
+                    <ns3:GroupReq Conjunction="AND">
+                        <Req Type="RegistryValueVersionReq">
+                            <Data>
+                                <ns3:RegistryValueVersionReq>
+                                    <Value>true</Value>
+                                    <Name>HKEY_LOCAL_MACHINE\SOFTWARE\ExampleVendor\LegacyTool</Name>
+                                </ns3:RegistryValueVersionReq>
+                            </Data>
+                        </Req>
+                    </ns3:GroupReq>
+                </Data>
+            </Req>
+        </ns3:SysReqs>
+    </ns2:SysReqs>
+    <ns2:ActionSets xmlns:ns2="http://novell.com/zenworks/datamodel/objects/actions">
+        <Id>34444444444444444444444444444444</Id>
+        <Type>PreInstall</Type>
+        <Version>1</Version>
+        <Modified>false</Modified>
+        <Actions>
+            <Id>35555555555555555555555555555555</Id>
+            <Type>Custom Legacy Action</Type>
+            <ContinueOnFailure>false</ContinueOnFailure>
+            <Enabled>true</Enabled>
+            <actionUniqueId>36666666666666666666666666666666</actionUniqueId>
+        </Actions>
+    </ns2:ActionSets>
+    <DisplayName>Legacy Tool</DisplayName>
+    <CreationDate>2026-01-01T00:00:00</CreationDate>
+</ns1:Bundle>

@@ -1,45 +1,201 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  SYNTHETIC SAMPLE DATA - for Zen2Intune AI development/testing only.
-  This is NOT a real ZENworks bundle export. The schema below is a best-effort
-  approximation; it has not been verified against real ZENworks exports or
-  official Micro Focus/OpenText documentation. See NEEDS_REVIEW.md.
+  SYNTHETIC SAMPLE DATA - fake values only, shaped to match two real ZENworks
+  bundle exports reconciled against this parser on 2026-07-04 (see
+  NEEDS_REVIEW.md, "Phase 1 - XML parser" item 0). Every UID, path, IP, and
+  registry key below is invented (IP is from the RFC 5737 documentation-only
+  reserved range). This is NOT a real ZENworks export.
 -->
-<Bundle>
-  <Name>Sample Application 1.0</Name>
-  <Guid>b1a2c3d4-1111-2222-3333-444455556666</Guid>
-  <Type>Install</Type>
-  <Version>1.0.0</Version>
-
-  <Requirements>
-    <Filter type="OperatingSystem" operator="greaterOrEqual" value="Windows10" />
-    <Filter type="Architecture" operator="equals" value="x64" />
-    <Filter type="FileExists" operator="notExists" value="C:\Program Files\SampleApp\app.exe" />
-  </Requirements>
-
-  <Dependencies>
-    <Dependency type="Bundle" name="Prerequisite Runtime" guid="e5f6a7b8-0000-1111-2222-333344445555" required="true" />
-  </Dependencies>
-
-  <ActionSets>
-    <ActionSet type="Install">
-      <Action type="InstallMsi" order="1">
-        <Path>%ZENCACHE%\SampleApp\SampleApp.msi</Path>
-        <Arguments>/qn REBOOT=ReallySuppress</Arguments>
-        <SuccessCodes>0,3010</SuccessCodes>
-      </Action>
-      <Action type="RunScript" order="2">
-        <ScriptType>Batch</ScriptType>
-        <ScriptBody>echo post-install step</ScriptBody>
-        <SuccessCodes>0</SuccessCodes>
-      </Action>
-    </ActionSet>
-    <ActionSet type="Uninstall">
-      <Action type="InstallMsi" order="1">
-        <Path>%ZENCACHE%\SampleApp\SampleApp.msi</Path>
-        <Arguments>/x /qn</Arguments>
-        <SuccessCodes>0,3010</SuccessCodes>
-      </Action>
-    </ActionSet>
-  </ActionSets>
-</Bundle>
+<ns1:Bundle xmlns:ns1="http://novell.com/zenworks/datamodel/objects/bundles" xmlns="http://novell.com/zenworks/datamodel/objects/bundles">
+    <ns2:UID xmlns:ns2="http://novell.com/zenworks/datamodel/objects">aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</ns2:UID>
+    <ns2:Name xmlns:ns2="http://novell.com/zenworks/datamodel/objects">Sample MSI App - Install</ns2:Name>
+    <ns2:InternalName xmlns:ns2="http://novell.com/zenworks/datamodel/objects">Sample MSI App - Install</ns2:InternalName>
+    <ns2:ParentUID xmlns:ns2="http://novell.com/zenworks/datamodel/objects">bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb</ns2:ParentUID>
+    <ns2:Path xmlns:ns2="http://novell.com/zenworks/datamodel/objects">/Bundles/Example/Sample MSI App - Install</ns2:Path>
+    <ns2:AdminID xmlns:ns2="http://novell.com/zenworks/datamodel/objects">Devices</ns2:AdminID>
+    <ns2:PrimaryType xmlns:ns2="http://novell.com/zenworks/datamodel/objects">Bundle</ns2:PrimaryType>
+    <ns2:SubType xmlns:ns2="http://novell.com/zenworks/datamodel/objects">Windows Bundle</ns2:SubType>
+    <ns2:Version xmlns:ns2="http://novell.com/zenworks/datamodel/objects/assignablecontent">5</ns2:Version>
+    <ns2:SysReqs xmlns:ns2="http://novell.com/zenworks/datamodel/objects/assignablecontent">
+        <ns3:SysReqs xmlns:ns3="http://www.novell.com/ZENworks/Reqs/v1.0" Conjunction="OR">
+            <Req Type="GroupReq">
+                <Data>
+                    <ns3:GroupReq Conjunction="AND">
+                        <Req Type="RegKeyExistsReq">
+                            <Data>
+                                <ns3:RegKeyExistsReq>
+                                    <Value>true</Value>
+                                    <Name>HKEY_LOCAL_MACHINE\SOFTWARE\ExampleVendor\Policy</Name>
+                                </ns3:RegKeyExistsReq>
+                            </Data>
+                        </Req>
+                        <Req Type="FileExistsReq">
+                            <Data>
+                                <ns3:FileExistsReq>
+                                    <Value>false</Value>
+                                    <Name>C:\Program Files\ExampleVendor\ExampleApp\exampleapp.exe</Name>
+                                </ns3:FileExistsReq>
+                            </Data>
+                        </Req>
+                    </ns3:GroupReq>
+                </Data>
+            </Req>
+            <Req Type="GroupReq">
+                <Data>
+                    <ns3:GroupReq Conjunction="AND">
+                        <Req Type="IPSegmentReq">
+                            <Data>
+                                <ns3:IPSegmentReq>
+                                    <Value>true</Value>
+                                    <Name>203.0.113.0/24</Name>
+                                </ns3:IPSegmentReq>
+                            </Data>
+                        </Req>
+                    </ns3:GroupReq>
+                </Data>
+            </Req>
+        </ns3:SysReqs>
+    </ns2:SysReqs>
+    <ns2:ActionSets xmlns:ns2="http://novell.com/zenworks/datamodel/objects/actions">
+        <Id>cccccccccccccccccccccccccccccccc</Id>
+        <Type>Uninstall</Type>
+        <Version>1</Version>
+        <Modified>false</Modified>
+        <Data>
+            <ns1:Uninstall xmlns:ns1="http://novell.com/zenworks/apps/appSchema">
+                <Enabled>true</Enabled>
+                <AllowManual>false</AllowManual>
+                <DaysBeforeUninstallWhenNotUsed>-1</DaysBeforeUninstallWhenNotUsed>
+                <IgnoreChainedDependencies>false</IgnoreChainedDependencies>
+            </ns1:Uninstall>
+        </Data>
+        <Actions>
+            <Id>dddddddddddddddddddddddddddddddd</Id>
+            <Type>Undo Install</Type>
+            <ContinueOnFailure>false</ContinueOnFailure>
+            <Enabled>true</Enabled>
+            <actionUniqueId>eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee</actionUniqueId>
+        </Actions>
+    </ns2:ActionSets>
+    <ns2:ActionSets xmlns:ns2="http://novell.com/zenworks/datamodel/objects/actions">
+        <Id>ffffffffffffffffffffffffffffffff</Id>
+        <Type>Verify</Type>
+        <Version>1</Version>
+        <Modified>false</Modified>
+        <Actions>
+            <Id>1111111111111111111111111111111a</Id>
+            <Type>Verify Install</Type>
+            <ContinueOnFailure>false</ContinueOnFailure>
+            <Enabled>true</Enabled>
+            <actionUniqueId>1111111111111111111111111111111b</actionUniqueId>
+        </Actions>
+    </ns2:ActionSets>
+    <ns2:ActionSets xmlns:ns2="http://novell.com/zenworks/datamodel/objects/actions">
+        <Id>1111111111111111111111111111111c</Id>
+        <Type>Launch</Type>
+        <Version>1</Version>
+        <Modified>false</Modified>
+        <Data>
+            <ns1:Launch xmlns:ns1="http://novell.com/zenworks/apps/appSchema" />
+        </Data>
+    </ns2:ActionSets>
+    <ns2:ActionSets xmlns:ns2="http://novell.com/zenworks/datamodel/objects/actions">
+        <Id>1111111111111111111111111111111d</Id>
+        <Type>Install</Type>
+        <Version>5</Version>
+        <Modified>false</Modified>
+        <Data>
+            <ns1:Install xmlns:ns1="http://novell.com/zenworks/apps/appSchema">
+                <InstallOption>InstallPerMachine</InstallOption>
+                <AllowedPostpones>3</AllowedPostpones>
+            </ns1:Install>
+        </Data>
+        <Actions>
+            <Id>1111111111111111111111111111111e</Id>
+            <Name>Install MSI</Name>
+            <Type>Install MSI Action</Type>
+            <Data>
+                <ns3:MSIData xmlns:ns3="http://www.novell.com/ZENworks/Actions/v1.0" FileName="ExampleApp-1.0.0-x64.msi" Locale="someLocale" NetworkInstall="false" PackageName="somePackageName" Vendor="someVendor" Version="someVersion">
+                    <Install>
+                        <CmdLine> /i "ExampleApp-1.0.0-x64.msi" /qn EXAMPLE_GROUP="Example Group" EXAMPLE_SERVER="example.invalid:443"</CmdLine>
+                    </Install>
+                    <Repair>
+                        <CmdLine> /f "ExampleApp-1.0.0-x64.msi" /qn</CmdLine>
+                    </Repair>
+                    <Uninstall>
+                        <CmdLine> /x "ExampleApp-1.0.0-x64.msi" /qn</CmdLine>
+                    </Uninstall>
+                    <Impersonate>
+                        <Impersonation>DYNAMIC_ADMIN_USER</Impersonation>
+                        <WindowAction>NORMAL</WindowAction>
+                        <ElevateUserAsAdmin>false</ElevateUserAsAdmin>
+                    </Impersonate>
+                    <Properties>ALLUSERS=1</Properties>
+                    <Properties>REBOOT=Suppress</Properties>
+                </ns3:MSIData>
+            </Data>
+            <LinkedObjectIDs>1111111111111111111111111111111f</LinkedObjectIDs>
+            <ContinueOnFailure>false</ContinueOnFailure>
+            <Enabled>true</Enabled>
+            <reqsFailAction>1</reqsFailAction>
+            <actionUniqueId>22222222222222222222222222222220</actionUniqueId>
+        </Actions>
+    </ns2:ActionSets>
+    <ns2:ActionSets xmlns:ns2="http://novell.com/zenworks/datamodel/objects/actions">
+        <Id>22222222222222222222222222222221</Id>
+        <Type>Terminate</Type>
+        <Version>1</Version>
+        <Modified>false</Modified>
+        <Data>
+            <ns1:Terminate xmlns:ns1="http://novell.com/zenworks/apps/appSchema">
+                <Enabled>true</Enabled>
+            </ns1:Terminate>
+        </Data>
+        <Actions>
+            <Id>22222222222222222222222222222222</Id>
+            <Type>Terminate Action Prompt</Type>
+            <Data>
+                <ns3:PromptActionData xmlns:ns3="http://www.novell.com/ZENworks/Actions/v1.0">
+                    <PromptFrequency>PROMPT_ALWAYS</PromptFrequency>
+                    <CancelsAllowed>0</CancelsAllowed>
+                    <Timeout>60</Timeout>
+                </ns3:PromptActionData>
+            </Data>
+            <ContinueOnFailure>false</ContinueOnFailure>
+            <Enabled>true</Enabled>
+            <actionUniqueId>22222222222222222222222222222223</actionUniqueId>
+        </Actions>
+        <Actions>
+            <Id>22222222222222222222222222222224</Id>
+            <Type>Terminate Action</Type>
+            <Data>
+                <ns3:TerminateActionData xmlns:ns3="http://www.novell.com/ZENworks/Actions/v1.0">
+                    <Terminate>true</Terminate>
+                </ns3:TerminateActionData>
+            </Data>
+            <ContinueOnFailure>false</ContinueOnFailure>
+            <Enabled>true</Enabled>
+            <actionUniqueId>22222222222222222222222222222225</actionUniqueId>
+        </Actions>
+    </ns2:ActionSets>
+    <ns2:ActionSets xmlns:ns2="http://novell.com/zenworks/datamodel/objects/actions">
+        <Id>22222222222222222222222222222226</Id>
+        <Type>Distribution</Type>
+        <Version>1</Version>
+        <Modified>false</Modified>
+        <Data>
+            <ns1:Launch xmlns:ns1="http://novell.com/zenworks/apps/appSchema" />
+        </Data>
+        <Actions>
+            <Id>22222222222222222222222222222227</Id>
+            <Type>Distribute Action</Type>
+            <ContinueOnFailure>false</ContinueOnFailure>
+            <Enabled>true</Enabled>
+            <actionUniqueId>22222222222222222222222222222228</actionUniqueId>
+        </Actions>
+    </ns2:ActionSets>
+    <DisplayName>Sample MSI App - Install</DisplayName>
+    <CreationDate>2026-01-01T00:00:00</CreationDate>
+    <Category>msi</Category>
+    <LicenseTrackingEnabled>false</LicenseTrackingEnabled>
+</ns1:Bundle>

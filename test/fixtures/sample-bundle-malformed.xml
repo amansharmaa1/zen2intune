@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- SYNTHETIC SAMPLE DATA - deliberately malformed XML for testing failure handling. -->
-<Bundle>
-  <Name>Broken Bundle</Name>
-  <Guid>00000000-0000-0000-0000-000000000000</Guid>
-  <Type>Install</Type>
-  <ActionSets>
-    <ActionSet type="Install">
-      <Action type="InstallMsi" order="1">
-        <Path>%ZENCACHE%\Broken\Broken.msi</Path>
-      </Action>
-    </ActionSet>
-  </ActionSets>
-<!-- missing closing </Bundle> tag on purpose -->
+<ns1:Bundle xmlns:ns1="http://novell.com/zenworks/datamodel/objects/bundles" xmlns="http://novell.com/zenworks/datamodel/objects/bundles">
+    <ns2:UID xmlns:ns2="http://novell.com/zenworks/datamodel/objects">37777777777777777777777777777777</ns2:UID>
+    <ns2:Name xmlns:ns2="http://novell.com/zenworks/datamodel/objects">Broken Bundle</ns2:Name>
+    <ns2:ActionSets xmlns:ns2="http://novell.com/zenworks/datamodel/objects/actions">
+        <Id>38888888888888888888888888888888</Id>
+        <Type>Install</Type>
+        <Actions>
+            <Id>39999999999999999999999999999999</Id>
+            <Type>Install MSI Action</Type>
+        </Actions>
+    </ns2:ActionSets>
+<!-- missing closing </ns1:Bundle> tag on purpose -->

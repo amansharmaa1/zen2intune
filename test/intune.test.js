@@ -1,21 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import path from 'node:path';
 
-import { parseBundleXml } from '../src/parser/parseBundle.js';
 import { normalizeBundle } from '../src/schema/normalize.js';
 import { convertToIntunePackage } from '../src/intune/convertBundle.js';
+import { legacyRawBasicBundle, legacyRawUnknownConstructsBundle } from './legacyRawBundles.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-function fixture(name) {
-  return readFileSync(path.join(__dirname, 'fixtures', name), 'utf8');
-}
-
-function structuredFromFixture(name) {
-  return normalizeBundle(parseBundleXml(fixture(name)));
+// See test/legacyRawBundles.js for why these tests use hand-built legacy-shaped
+// raw bundles instead of test/fixtures/*.xml (which are real-shaped as of
+// 2026-07-04 and not yet consumable by normalize.js/convertBundle.js).
+function structuredFromLegacyRaw(rawBuilder) {
+  return normalizeBundle(rawBuilder());
 }
 
 function codesOf(needsReview) {
@@ -23,7 +17,7 @@ function codesOf(needsReview) {
 }
 
 test('converts a well-formed bundle: derives what it can, flags the rest', () => {
-  const structured = structuredFromFixture('sample-bundle-basic.xml');
+  const structured = structuredFromLegacyRaw(legacyRawBasicBundle);
   const { app, needsReview } = convertToIntunePackage(structured);
 
   assert.equal(app['@odata.type'], '#microsoft.graph.win32LobApp');
@@ -69,7 +63,7 @@ test('converts a well-formed bundle: derives what it can, flags the rest', () =>
 });
 
 test('never fabricates a command line, architecture, or rule for unrecognized constructs', () => {
-  const structured = structuredFromFixture('sample-bundle-unknown-constructs.xml');
+  const structured = structuredFromLegacyRaw(legacyRawUnknownConstructsBundle);
   const { app, needsReview } = convertToIntunePackage(structured);
 
   assert.equal(app.displayName, 'Legacy Tool');

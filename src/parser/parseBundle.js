@@ -1,17 +1,22 @@
 import { XMLParser, XMLValidator } from 'fast-xml-parser';
 import { BundleParseError } from './errors.js';
 import {
-  KNOWN_ACTION_TYPES,
-  KNOWN_REQUIREMENT_FILTER_TYPES,
-  KNOWN_DEPENDENCY_TYPES,
   KNOWN_ACTION_SET_TYPES,
+  KNOWN_ACTION_TYPES,
+  KNOWN_REQUIREMENT_LEAF_TYPES,
 } from './knownTypes.js';
 
+// removeNSPrefix: real ZENworks exports wrap nearly every element in ns1:/ns2:
+// namespace prefixes whose URI mapping changes by section of the document.
+// Stripping prefixes and matching on local element names only was verified
+// empirically (against a synthetic, non-real namespaced XML snippet) to behave
+// as expected with this library version - see NEEDS_REVIEW.md.
 const parserOptions = {
   ignoreAttributes: false,
   attributeNamePrefix: '@_',
   allowBooleanAttributes: true,
   trimValues: true,
+  removeNSPrefix: true,
 };
 
 function asArray(value) {
@@ -33,14 +38,21 @@ function attrOf(node, attrName) {
   return value === undefined ? null : value;
 }
 
+function boolOf(node) {
+  const text = textOf(node);
+  if (text === 'true') return true;
+  if (text === 'false') return false;
+  return null;
+}
+
 /**
- * Deterministically parses a ZENworks-style bundle export XML string into raw
- * extracted data (bundle metadata, requirements, dependencies, action sets).
- *
- * This function performs no interpretation or inference: unrecognized
- * types/fields are passed through and flagged in `warnings`, never guessed at.
- * Structurally fatal problems (invalid XML, missing required elements) throw
- * a BundleParseError instead of producing a partial/best-guess structure.
+ * Deterministically parses a real-shaped ZENworks bundle export XML string
+ * (reconciled against two real exports on 2026-07-04 - see NEEDS_REVIEW.md)
+ * into raw extracted data. Performs no interpretation: unrecognized
+ * types/fields are passed through and flagged in `warnings`, never guessed
+ * at. Structurally fatal problems (invalid XML, missing bundle identity)
+ * throw a BundleParseError instead of producing a partial/best-guess
+ * structure.
  */
 export function parseBundleXml(xmlString) {
   if (typeof xmlString !== 'string' || xmlString.trim().length === 0) {
@@ -72,22 +84,21 @@ export function parseBundleXml(xmlString) {
 
   const bundle = parseBundleMetadata(root);
   const requirements = parseRequirements(root, warnings);
-  const dependencies = parseDependencies(root, warnings);
+  // No real bundle-to-bundle dependency reference construct was found in
+  // either reconciled sample - see NEEDS_REVIEW.md. Always empty for now.
+  const dependencies = [];
   const actionSets = parseActionSets(root, warnings);
 
   return { bundle, requirements, dependencies, actionSets, warnings };
 }
 
 function parseBundleMetadata(root) {
+  const uid = textOf(root.UID);
   const name = textOf(root.Name);
-  const guid = textOf(root.Guid);
-  const type = textOf(root.Type);
-  const version = textOf(root.Version);
 
   const missing = [];
+  if (!uid) missing.push('UID');
   if (!name) missing.push('Name');
-  if (!guid) missing.push('Guid');
-  if (!type) missing.push('Type');
   if (missing.length > 0) {
     throw new BundleParseError(
       `Bundle is missing required field(s): ${missing.join(', ')}`,
@@ -95,113 +106,178 @@ function parseBundleMetadata(root) {
     );
   }
 
-  return { name, guid, type, version: version ?? null };
+  return {
+    uid,
+    name,
+    internalName: textOf(root.InternalName),
+    parentUid: textOf(root.ParentUID),
+    path: textOf(root.Path),
+    adminId: textOf(root.AdminID),
+    description: textOf(root.Description),
+    primaryType: textOf(root.PrimaryType),
+    subType: textOf(root.SubType),
+    category: textOf(root.Category),
+    // ZENworks' own edit/revision counter - NOT a software version string.
+    // A real software version, if present, lives on an MSI action's own
+    // Version attribute instead. See NEEDS_REVIEW.md.
+    version: textOf(root.Version),
+    displayName: textOf(root.DisplayName),
+    creationDate: textOf(root.CreationDate),
+  };
 }
 
+// Requirements (SysReqs) are a recursive boolean tree: a root conjunction
+// (AND/OR) wraps Req nodes, each either a nested GroupReq (its own
+// conjunction + child Reqs) or a leaf check (a Type, a boolean Value, and a
+// target Name - e.g. a registry key path, CIDR block, or file path). There is
+// no "operator" concept - just a boolean assertion per leaf. This walks the
+// tree and flattens it into a list of leaves, each carrying its full
+// ancestry (`groupPath`) of {conjunction, index} steps so the AND/OR
+// structure is preserved rather than discarded.
 function parseRequirements(root, warnings) {
-  const filters = asArray(root.Requirements?.Filter);
+  const sysReqsRoot = root.SysReqs?.SysReqs;
+  if (!sysReqsRoot) return [];
 
-  return filters.map((filter, index) => {
-    const path = `/Bundle/Requirements/Filter[${index}]`;
-    const type = attrOf(filter, 'type');
-    const operator = attrOf(filter, 'operator');
-    const value = attrOf(filter, 'value');
+  const rootConjunction = attrOf(sysReqsRoot, 'Conjunction');
+  const leaves = [];
+  asArray(sysReqsRoot.Req).forEach((reqNode, index) => {
+    walkReqNode(
+      reqNode,
+      [{ conjunction: rootConjunction, index }],
+      `/Bundle/SysReqs/SysReqs/Req[${index}]`,
+      warnings,
+      leaves,
+    );
+  });
+  return leaves;
+}
 
-    if (!type) {
-      warnings.push({
-        code: 'requirement_missing_type',
-        message: 'Requirement filter is missing a type attribute',
-        path,
-      });
-    } else if (!KNOWN_REQUIREMENT_FILTER_TYPES.includes(type)) {
-      warnings.push({
-        code: 'unknown_requirement_type',
-        message: `Unrecognized requirement filter type "${type}" - not mapped, needs review`,
-        path,
-      });
+function walkReqNode(reqNode, groupPath, path, warnings, leaves) {
+  const reqType = attrOf(reqNode, 'Type');
+
+  if (!reqType) {
+    warnings.push({ code: 'req_missing_type', message: 'Req element is missing a Type attribute', path });
+    return;
+  }
+
+  if (reqType === 'GroupReq') {
+    const groupData = reqNode.Data?.GroupReq;
+    if (!groupData) {
+      warnings.push({ code: 'group_req_missing_data', message: 'GroupReq has no Data/GroupReq child', path });
+      return;
     }
+    const conjunction = attrOf(groupData, 'Conjunction');
+    asArray(groupData.Req).forEach((child, index) => {
+      walkReqNode(
+        child,
+        [...groupPath, { conjunction, index }],
+        `${path}/Data/GroupReq/Req[${index}]`,
+        warnings,
+        leaves,
+      );
+    });
+    return;
+  }
 
-    return { type, operator, value, path };
+  const leafData = reqNode.Data?.[reqType];
+  if (!leafData) {
+    warnings.push({
+      code: 'req_missing_data',
+      message: `Req of type "${reqType}" has no matching Data/${reqType} child`,
+      path,
+    });
+    return;
+  }
+
+  if (!KNOWN_REQUIREMENT_LEAF_TYPES.includes(reqType)) {
+    warnings.push({
+      code: 'unknown_requirement_type',
+      message: `Unrecognized requirement type "${reqType}" - not mapped, needs review`,
+      path,
+    });
+  }
+
+  leaves.push({
+    groupPath,
+    reqType,
+    assertedValue: boolOf(leafData.Value),
+    target: textOf(leafData.Name),
+    path,
   });
 }
 
-function parseDependencies(root, warnings) {
-  const deps = asArray(root.Dependencies?.Dependency);
-
-  return deps.map((dep, index) => {
-    const path = `/Bundle/Dependencies/Dependency[${index}]`;
-    const type = attrOf(dep, 'type');
-    const name = attrOf(dep, 'name');
-    const guid = attrOf(dep, 'guid');
-    const requiredAttr = attrOf(dep, 'required');
-    const required = requiredAttr === true || requiredAttr === 'true';
-
-    if (!type) {
-      warnings.push({
-        code: 'dependency_missing_type',
-        message: 'Dependency is missing a type attribute',
-        path,
-      });
-    } else if (!KNOWN_DEPENDENCY_TYPES.includes(type)) {
-      warnings.push({
-        code: 'unknown_dependency_type',
-        message: `Unrecognized dependency type "${type}" - not mapped, needs review`,
-        path,
-      });
-    }
-
-    if (!name) {
-      warnings.push({
-        code: 'dependency_missing_name',
-        message: 'Dependency is missing a name attribute',
-        path,
-      });
-    }
-
-    return { type, name, guid, required, path };
-  });
-}
-
+// ActionSets are repeated sibling elements directly under <Bundle> (not
+// nested inside one wrapping parent). Individual actions are <Actions>
+// elements (plural tag, singular meaning) repeated under an ActionSet.
 function parseActionSets(root, warnings) {
-  const sets = asArray(root.ActionSets?.ActionSet);
-
-  return sets.map((set, setIndex) => {
-    const setPath = `/Bundle/ActionSets/ActionSet[${setIndex}]`;
-    const type = attrOf(set, 'type');
+  return asArray(root.ActionSets).map((set, index) => {
+    const path = `/Bundle/ActionSets[${index}]`;
+    const type = textOf(set.Type);
 
     if (!type) {
-      warnings.push({
-        code: 'action_set_missing_type',
-        message: 'ActionSet is missing a type attribute',
-        path: setPath,
-      });
+      warnings.push({ code: 'action_set_missing_type', message: 'ActionSet is missing a Type element', path });
     } else if (!KNOWN_ACTION_SET_TYPES.includes(type)) {
       warnings.push({
         code: 'unknown_action_set_type',
         message: `Unrecognized ActionSet type "${type}" - not mapped, needs review`,
-        path: setPath,
+        path,
       });
     }
 
-    const actions = asArray(set.Action).map((action, actionIndex) =>
-      parseAction(action, `${setPath}/Action[${actionIndex}]`, warnings),
+    const actions = asArray(set.Actions).map((action, actionIndex) =>
+      parseAction(action, `${path}/Actions[${actionIndex}]`, warnings),
     );
 
-    return { type, actions, path: setPath };
+    return {
+      id: textOf(set.Id),
+      type,
+      version: textOf(set.Version),
+      modified: boolOf(set.Modified),
+      actions,
+      path,
+    };
   });
 }
 
-function parseAction(action, path, warnings) {
-  const type = attrOf(action, 'type');
-  const orderAttr = attrOf(action, 'order');
-  const order = orderAttr !== null ? Number(orderAttr) : null;
+// Field extraction is only implemented for the two action types that carry
+// install/uninstall mechanics relevant to Intune conversion. Other real
+// action types (Display Message Action, Terminate Action(Prompt), Verify
+// Install, Undo Install, Distribute Action) are recognized against the known
+// vocabulary but their Data isn't deeply parsed - see NEEDS_REVIEW.md.
+function extractMsiFields(actionData) {
+  const msiData = actionData?.MSIData;
+  if (!msiData) return {};
+  return {
+    fileName: attrOf(msiData, 'FileName'),
+    installCmdLine: textOf(msiData.Install?.CmdLine),
+    repairCmdLine: textOf(msiData.Repair?.CmdLine),
+    uninstallCmdLine: textOf(msiData.Uninstall?.CmdLine),
+    properties: asArray(msiData.Properties).map((p) => textOf(p)).filter((p) => p !== null),
+  };
+}
+
+function extractScriptFields(actionData) {
+  const exec = actionData?.RunScriptActionHandlerData?.Exec;
+  if (!exec) return {};
+  return {
+    scriptBody: textOf(exec.Script),
+    scriptExtension: attrOf(exec.Script, 'extension'),
+    executorPath: attrOf(exec.ProgramExecutor, 'path'),
+    executorArguments: attrOf(exec.ProgramExecutor, 'arguments'),
+    runAs: textOf(exec.AdvancedSettings?.RunAs),
+  };
+}
+
+const FIELD_EXTRACTORS_BY_ACTION_TYPE = {
+  'Install MSI Action': extractMsiFields,
+  'Run Script Action': extractScriptFields,
+};
+
+function parseAction(actionNode, path, warnings) {
+  const type = textOf(actionNode.Type);
 
   if (!type) {
-    warnings.push({
-      code: 'action_missing_type',
-      message: 'Action is missing a type attribute',
-      path,
-    });
+    warnings.push({ code: 'action_missing_type', message: 'Action is missing a Type element', path });
   } else if (!KNOWN_ACTION_TYPES.includes(type)) {
     warnings.push({
       code: 'unknown_action_type',
@@ -210,37 +286,24 @@ function parseAction(action, path, warnings) {
     });
   }
 
-  const successCodesText = textOf(action.SuccessCodes);
-  const successCodes = successCodesText
-    ? successCodesText.split(',').map((s) => s.trim()).filter(Boolean).map(Number)
-    : [];
+  const extractor = type ? FIELD_EXTRACTORS_BY_ACTION_TYPE[type] : null;
+  const fields = extractor ? extractor(actionNode.Data) : {};
 
-  const fields = {
-    path: textOf(action.Path),
-    arguments: textOf(action.Arguments),
-    workingDirectory: textOf(action.WorkingDirectory),
-    scriptType: textOf(action.ScriptType),
-    scriptBody: textOf(action.ScriptBody),
-    sourcePath: textOf(action.SourcePath),
-    destinationPath: textOf(action.DestinationPath),
+  if (type === 'Install MSI Action' && !fields.installCmdLine) {
+    warnings.push({ code: 'action_missing_expected_field', message: 'Install MSI Action has no Install/CmdLine', path });
+  }
+  if (type === 'Run Script Action' && !fields.scriptBody) {
+    warnings.push({ code: 'action_missing_expected_field', message: 'Run Script Action has no Script body', path });
+  }
+
+  return {
+    id: textOf(actionNode.Id),
+    name: textOf(actionNode.Name),
+    type,
+    enabled: boolOf(actionNode.Enabled),
+    continueOnFailure: boolOf(actionNode.ContinueOnFailure),
+    linkedObjectIds: textOf(actionNode.LinkedObjectIDs),
+    fields,
+    path,
   };
-
-  if (type === 'InstallMsi' && !fields.path) {
-    warnings.push({ code: 'action_missing_expected_field', message: 'InstallMsi action has no <Path>', path });
-  }
-  if (type === 'RunScript' && !fields.scriptBody) {
-    warnings.push({ code: 'action_missing_expected_field', message: 'RunScript action has no <ScriptBody>', path });
-  }
-  if (type === 'LaunchExecutable' && !fields.path) {
-    warnings.push({ code: 'action_missing_expected_field', message: 'LaunchExecutable action has no <Path>', path });
-  }
-  if (type === 'InstallFiles' && (!fields.sourcePath || !fields.destinationPath)) {
-    warnings.push({
-      code: 'action_missing_expected_field',
-      message: 'InstallFiles action is missing <SourcePath> or <DestinationPath>',
-      path,
-    });
-  }
-
-  return { type, order, successCodes, fields, path };
 }

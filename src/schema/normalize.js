@@ -1,8 +1,14 @@
+// NOTE: this deliberately imports the LEGACY_* (fictitious, pre-2026-07-04)
+// vocabulary constants, not the real ones src/parser/parseBundle.js now uses -
+// this module was not updated in the real-bundle reconciliation and still
+// targets the original invented Phase 1 shape. See NEEDS_REVIEW.md
+// ("Phase 1 - XML parser" item 0) and the comment above the LEGACY_* exports
+// in knownTypes.js.
 import {
-  KNOWN_ACTION_TYPES,
-  KNOWN_REQUIREMENT_FILTER_TYPES,
-  KNOWN_DEPENDENCY_TYPES,
-  KNOWN_ACTION_SET_TYPES,
+  LEGACY_KNOWN_ACTION_TYPES as KNOWN_ACTION_TYPES,
+  LEGACY_KNOWN_REQUIREMENT_FILTER_TYPES as KNOWN_REQUIREMENT_FILTER_TYPES,
+  LEGACY_KNOWN_DEPENDENCY_TYPES as KNOWN_DEPENDENCY_TYPES,
+  LEGACY_KNOWN_ACTION_SET_TYPES as KNOWN_ACTION_SET_TYPES,
 } from '../parser/knownTypes.js';
 import { BUNDLE_SCHEMA_VERSION } from './bundleSchema.js';
 
