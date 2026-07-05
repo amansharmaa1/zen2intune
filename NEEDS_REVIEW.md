@@ -205,7 +205,77 @@ uncertainties, just choices - see inline comments where noted):
   see "Phase 1" item 0) rather than mapped into a specific shape, since no real
   dependency construct has been observed to shape a mapping against.
 
+## Content pipeline and MSI-derived detection rule (added 2026-07-05)
+
+The single biggest gap - no detection rule - is now closed **for MSI-based bundles
+whose export includes the installer binary**, without fabricating anything:
+
+- **Where the ProductCode comes from.** The bundle XML carries no ProductCode
+  anywhere (re-confirmed against both real exports). The only non-fabricated source
+  is the MSI binary itself: `src/msi/readMsiProductInfo.js` reads the MSI's Property
+  table **read-only** via the Windows Installer COM automation interface
+  (`WindowsInstaller.Installer` / msi.dll), extracting ProductCode, ProductVersion,
+  ProductName, Manufacturer, UpgradeCode, and ALLUSERS. Every API call used
+  (Installer.OpenDatabase with msiOpenDatabaseModeReadOnly=0, Database.OpenView,
+  View.Execute/Fetch, Record.StringData) was verified against Microsoft Learn on
+  2026-07-05 - doc URLs are cited in `src/msi/readMsiProductInfo.ps1`'s header.
+  A missing or non-GUID ProductCode raises `MsiReadError`; nothing is repaired or
+  invented.
+- **How the MSI file is located.** `src/parser/parseActionContentInfo.js` parses the
+  export's `_ActionContentInfo.xml` sidecar (no namespaces, unlike the main XML),
+  which maps the Install ActionSet's "Install MSI Action" to a `ContentFilePath`
+  relative to the export directory. `src/pipeline/convertBundleExport.js` composes
+  the whole flow for an export directory: main XML -> normalize -> sidecar -> MSI
+  read -> convert. Sidecar paths that escape the export directory are refused
+  (`content_path_escapes_export_directory`); a missing sidecar/content file or a
+  failed read degrades to a flag (`content_sidecar_missing` / `content_file_missing`
+  / `msi_read_failed`), never a guess.
+- **What the conversion now emits when MSI properties are available**
+  (`options.msiProductInfo` on `convertToIntunePackage`): a
+  `win32LobAppProductCodeRule` with `ruleType: "detection"` (detection-only per its
+  v1.0 doc page; re-verified 2026-07-05 - note there is **no v1.0 type named
+  `win32LobAppDetectionRule`**; the `win32LobAppDetection` hierarchy is beta-only,
+  and this project targets v1.0 as Microsoft recommends), plus `msiInformation`
+  (productCode / productVersion / upgradeCode / productName / publisher <-
+  Manufacturer), app-level `publisher`, and `fileName`/`setupFilePath` from the
+  MSIData FileName attribute. `packageType` maps from the MSI's ALLUSERS property
+  per its documented semantics (unset -> perUser, "1" -> perMachine); ALLUSERS=2
+  defers the decision to install time, so it's flagged
+  (`msi_package_type_undetermined`), not guessed as `dualPurpose`.
+- **Verified end-to-end against the real MSI bundle export on 2026-07-05** (values
+  redacted, nothing copied into the repo): the pipeline produced a payload with a
+  valid-GUID ProductCode detection rule, msiexec install/uninstall command lines,
+  fileName/setupFilePath, publisher, and msiInformation with packageType
+  perMachine. The script-only real bundle degrades to flags (no detection source
+  exists for it), with no crash.
+- **Still true / still flagged:**
+  - MSI reading is **Windows-only** (COM/msi.dll); on other platforms the pipeline
+    flags `msi_read_failed` and produces no detection rule.
+  - Script-only bundles have **no detection-rule source at all** - flagged
+    (`no_detection_rule_derivable`), to be resolved by a human or the Phase 4 AI
+    layer's *suggestion*.
+  - `msiInformation.requiresReboot` is never set - no verified signal for it (the
+    bundle's `REBOOT=Suppress` MSI property is a suppression instruction, not a
+    statement that the product requires a reboot).
+  - "Valid payload" here means schema-shaped per the v1.0 docs with a real detection
+    rule - it has **not** been validated against a live Intune tenant (requires
+    tenant access; see "stop and report" note in the task log). Graph's Create
+    win32LobApp doc does not mark which request-body properties are mandatory, so
+    tenant-side validation remains the final arbiter.
+  - The tests' synthetic MSI is created by `test/helpers/createSyntheticMsi.ps1`
+    (Property table only, fake values) - real COM round-trip, no real installer
+    used or committed. On non-Windows CI these tests skip rather than silently pass.
+
 ## Phase 3 - Intune conversion engine
+
+**Addendum 2026-07-05:** the "No detection rule is ever generated" bullet below is
+superseded by the "Content pipeline" section above - a ProductCode detection rule
+IS now generated when the export directory contains the MSI binary. The "no
+PowerShell" bullet is also amended: the conversion *output* still contains no
+PowerShell, but the repo now ships two small PowerShell bridge scripts
+(`src/msi/readMsiProductInfo.ps1`, `test/helpers/createSyntheticMsi.ps1`) whose
+cmdlets are standard built-ins (`New-Object`, `Test-Path`, `ConvertTo-Json`) plus
+the documented Windows Installer COM automation interface.
 
 **Rewritten on 2026-07-04 to consume the real Phase 2 shape.** `convertBundle.js` was
 rebuilt against real ZENworks data instead of the earlier invented shape. What

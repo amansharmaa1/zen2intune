@@ -56,9 +56,15 @@ never guesses, and the AI layer never touches raw XML directly.
 
 ## Repository Layout
 
-- `src/parser/` — Phase 1, deterministic XML parser (no AI)
+- `src/parser/` — Phase 1, deterministic XML parsers (no AI): the main bundle XML
+  and the `_ActionContentInfo.xml` content sidecar
 - `src/schema/` — Phase 2, canonical structured JSON schema + validation/normalization
+- `src/msi/` — deterministic MSI Property-table reader (ProductCode etc.) via the
+  Windows Installer COM automation interface; Windows-only, read-only, doc URLs
+  cited in the .ps1 header
 - `src/intune/` — Phase 3, Intune Win32 app conversion engine
+- `src/pipeline/` — end-to-end converter for a full bundle export directory
+  (main XML + sidecar + `_content/` installer binary)
 - `src/ai/` — Phase 4, AI interpretation layer (only stage allowed to call an LLM)
 - `test/` — test files (`*.test.js`, run via `node:test`) and `test/fixtures/`
   (synthetic sample bundles only — never real ZENworks data)
