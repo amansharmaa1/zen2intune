@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SYNTHETIC SAMPLE DATA - fake values, shaped to match a real ZENworks export's
+  _ActionContentInfo.xml sidecar (reconciled 2026-07-05, see NEEDS_REVIEW.md).
+  This is NOT a real ZENworks export.
+-->
+<ActionInformation>
+    <ActionSet type="Install">
+        <Action name="Install MSI" type="Install MSI Action" index="1">
+            <Content>
+                <ContentFilePath includeAllFilesinFolder="false" includeAllFilesinSubFolders="false" contentPackageType="3">Sample MSI App - Install_content/1111111111111111111111111111111f/ExampleApp-1.0.0-x64.msi</ContentFilePath>
+            </Content>
+        </Action>
+    </ActionSet>
+</ActionInformation>
