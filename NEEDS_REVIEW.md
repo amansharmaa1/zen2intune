@@ -137,54 +137,14 @@ than guessed at):
   contain another `Req`, which could itself be a `GroupReq`) but was never actually
   observed beyond two levels in these two samples.
 
-**Downstream impact - Phase 2 and Phase 3 source code now target a stale shape.**
-Rewriting Phase 1 to be honest about the real structure necessarily changes its output
-shape substantially (real field names, a leaf-list-with-`groupPath` for conditions
-instead of a flat filter list, no `successCodes`, action `fields` keyed by real
-action-type-specific names instead of the invented `path`/`arguments`/`scriptBody`
-convention). Per the scope of this task, **`src/schema/normalize.js` and
-`src/intune/convertBundle.js` were deliberately left unmodified** - they still expect
-the old invented Phase 1 shape. One compatibility shim *was* required, discovered only
-by actually running the suite (first attempt: aliasing the old export name directly to
-the new real vocabulary - this loaded, but silently broke every "recognized" check,
-since real strings like `"Install MSI Action"` don't match legacy-shaped test data
-using invented strings like `"InstallMsi"`, which is what `normalize.js`'s own
-pre-existing tests are built around). The actual fix: `knownTypes.js` now exports the
-real vocabulary under its own honest names (`KNOWN_ACTION_TYPES`, etc., used by
-`parseBundle.js` and its tests) **plus** a separate, clearly-labeled set of
-`LEGACY_KNOWN_*` constants holding the original invented vocabulary verbatim.
-`normalize.js`'s import statement (and only that one statement - `import {
-LEGACY_KNOWN_ACTION_TYPES as KNOWN_ACTION_TYPES, ... }`) now pulls from the legacy
-set via aliasing, so every line of its actual logic is unchanged, byte-for-byte, and
-it keeps meaning exactly what it always meant for its own (pre-reconciliation) tests.
-Concretely, today:
-- `normalize.js`'s `REQUIRED_FIELDS_BY_ACTION_KIND` map has no entries matching real
-  action type strings (`"Install MSI Action"`, etc.), so every real action is
-  permanently `complete: false` even when `recognized: true`. This doesn't crash
-  anything - Phase 3 just always finds zero command-line candidates for real data and
-  flags `no_command_line_candidate` for every stage.
-- `convertBundle.js`'s condition lookups (`kind === 'Architecture'`, `'OperatingSystem'`,
-  `'FileExists'`) will never match real leaf `reqType` values (`RegKeyExistsReq`,
-  `FileExistsReq`, `IPSegmentReq`) or the new `target`/`assertedValue` field names, so
-  applicable-architecture and file-system-requirement-rule derivation silently find
-  nothing to do against real data (again, no crash - just no output, which is honest
-  given the mismatch, not a bug being papered over).
-- Because `test/schema.test.js` and `test/intune.test.js` previously ran the shared
-  Phase 1 fixtures through the real pipeline as an integration test, and those
-  fixtures are now real-shaped, their two fixture-dependent tests each were converted
-  to use hand-built raw objects shaped like the *old* Phase 1 contract instead - this
-  keeps them passing and still exercising `normalize.js`/`convertBundle.js`'s actual
-  logic, but it means **those tests no longer prove anything about real-world data
-  flowing all the way through the pipeline.** Only Phase 1's own tests now exercise
-  the real-shaped fixtures end-to-end through `parseBundleXml`.
-- **Recommended next step:** update `normalize.js` and `convertBundle.js` to consume
-  the new Phase 1 shape (in particular: rewrite `buildCommandLineForAction` to prepend
-  `msiexec ` to the now-ready-made `installCmdLine`/`uninstallCmdLine` values rather
-  than reconstructing them from `Path`+`Arguments`; drop the `successCodes`-based
-  `buildReturnCodes` premise entirely, since no real data source for it exists; walk
-  the new `groupPath`-annotated condition list instead of doing flat `.find()` calls).
-  This was not done in this pass since it wasn't requested and is a substantial
-  design task in its own right.
+**Downstream impact - RESOLVED on 2026-07-04 (follow-up pass).** The paragraph that
+used to be here described `normalize.js`/`convertBundle.js` as deliberately left
+unmodified against the old invented shape, with a `LEGACY_KNOWN_*` compatibility shim
+so their pre-existing tests kept passing. That has since been superseded: both modules
+were rewritten to consume the real Phase 1 shape, the `LEGACY_KNOWN_*` exports and the
+aliased import were removed, and `test/schema.test.js`/`test/intune.test.js` now run
+the real-shaped fixtures end-to-end again. See "Phase 2 - Structured JSON schema" and
+"Phase 3 - Intune conversion engine" below for what actually works now.
 
 ### 1. (Historical) The original schema was a synthetic approximation, not verified
 
@@ -208,78 +168,128 @@ fail or guess - expand these lists as more real samples become available.
 
 ## Phase 2 - Structured JSON schema
 
-No new external/unverifiable facts were introduced in this phase - it's a pure,
-deterministic restructuring of Phase 1's output plus flagging against the same known-
-type vocabulary the parser already uses. Two design decisions worth knowing about
-(not uncertainties, just choices - see inline comments where noted):
+**Rewritten on 2026-07-04 to consume the real Phase 1 shape.** `bundleSchema.js` and
+`normalize.js` now match `src/parser/parseBundle.js`'s real field names (`uid`,
+`reqType`, `groupPath`, `assertedValue`, `target`, action `kind` values like
+`"Install MSI Action"`, etc.) instead of the earlier invented ones. `BUNDLE_SCHEMA_VERSION`
+was bumped from `1.0.0` to `2.0.0` since the shape isn't backward compatible.
+`test/schema.test.js` runs the real fixtures end-to-end through
+`parseBundleXml` -> `normalizeBundle` again (not hand-built legacy-shaped objects).
+
+No new external/unverifiable facts were introduced in this rewrite - it's a pure,
+deterministic restructuring of Phase 1's (now real) output plus flagging against the
+same known-type vocabulary the parser uses. Design decisions worth knowing about (not
+uncertainties, just choices - see inline comments where noted):
 
 - The validator in `src/schema/jsonSchemaValidator.js` supports only a small subset
   of JSON Schema (`type`, `required`, `properties`, `items`, `enum`). It's sufficient
   for this project's own schema but is not a general-purpose validator - don't reuse
   it for arbitrary external JSON Schema documents without extending it first.
-- An action's `complete` flag is only ever `true` for a *recognized* action kind with
-  all of that kind's required fields present (see `REQUIRED_FIELDS_BY_ACTION_KIND` in
-  `src/schema/normalize.js`). Unrecognized kinds are always `complete: false` since
-  completeness of a construct we don't understand isn't derivable - it shows up in
-  `needsReview` instead.
+- An action's `complete` flag is `true` when either (a) it's a *recognized* kind with
+  all of that kind's required fields present (`REQUIRED_FIELDS_BY_ACTION_KIND` covers
+  only `"Install MSI Action"` and `"Run Script Action"`, the two kinds this project
+  deeply parses fields for), or (b) it's a *recognized* kind with no completeness
+  criteria at all (e.g. `"Verify Install"`, `"Undo Install"`, `"Terminate Action"` -
+  real ZENworks action types whose `Data` isn't deeply parsed, so there's nothing to
+  check and nothing known to be missing). **This is a behavior change from the
+  pre-reconciliation version**, which defaulted an action with no map entry to
+  `complete: false`; that no longer made sense once "no map entry" started meaning
+  "a real, recognized type we just don't extract fields for" rather than "a fictitious
+  type." An *unrecognized* kind is always `complete: false` regardless - completeness
+  of a construct we don't understand at all still isn't derivable.
+- `conditions[].groupPath` (the AND/OR ancestry of each flattened requirement leaf) is
+  passed through from Phase 1 unchanged - normalize.js does no logic with it itself,
+  it's `convertBundle.js` (Phase 3) that reads it to decide whether a bundle's
+  requirement tree is simple enough to convert automatically.
+- `dependencies` is passed through as an untransformed array (currently always empty -
+  see "Phase 1" item 0) rather than mapped into a specific shape, since no real
+  dependency construct has been observed to shape a mapping against.
 
 ## Phase 3 - Intune conversion engine
 
-**Addendum (2026-07-04, after real-bundle reconciliation):** the premises below about
-`successCodes` and `Path`+`Arguments`-based MSI command-line construction are now
-known to not match real ZENworks data - see "Phase 1 - XML parser" item 0 above for
-what real data actually looks like and exactly what's now stale here. This section is
-left as originally written (accurate to what Phase 3 was built against) rather than
-rewritten, since updating `convertBundle.js` itself was out of scope for this pass.
+**Rewritten on 2026-07-04 to consume the real Phase 2 shape.** `convertBundle.js` was
+rebuilt against real ZENworks data instead of the earlier invented shape. What
+changed, and what actually works end-to-end against the real-shaped sample fixtures
+now (verified by `test/intune.test.js`):
 
-All Graph field names, resource types (`@odata.type` values), and enum members used
-in `src/intune/graphEnums.js` and `src/intune/convertBundle.js` were checked against
-Microsoft Learn documentation (`win32LobApp`, `win32LobAppRule` and its four concrete
-subtypes, `win32LobAppInstallExperience`, `win32LobAppReturnCode`,
-`win32LobAppMsiInformation`, `windowsArchitecture`) on 2026-07-04, not recalled from
-memory alone. See the doc URLs in `src/intune/graphEnums.js`'s comments.
-
-What this phase deliberately does **not** produce, and why - all surfaced as
-`needsReview` entries on the conversion output rather than guessed at:
-
-- **No detection rule is ever generated.** Intune's detection rule types
-  (`win32LobAppProductCodeRule`, `win32LobAppRegistryRule`,
-  `win32LobAppFileSystemRule`, `win32LobAppPowerShellScriptRule`) all need data our
-  structured schema doesn't carry (e.g. an MSI product code - Phase 1's parser never
-  captured one, since the synthetic schema's `InstallMsi` action only has a source
-  file path, not a product code). Every conversion always emits an empty `rules`
-  detection set plus a `no_detection_rule_derivable` review item. This is a real gap
-  that needs either a Phase 1 schema extension (once a real ZENworks sample confirms
-  whether product codes are actually present in real exports) or a human/AI-supplied
-  detection rule.
-- **`minimumSupportedWindowsRelease` is never set.** Graph documents this as a plain
-  string with a single example (`Windows11_23H2`) and no published enumeration of
-  valid values, so there's no verified way to map a ZENworks `OperatingSystem`
-  condition value (e.g. `"Windows10"`) onto it. Always flagged when that condition
-  exists.
-- **`installExperience` (`runAsAccount`, `deviceRestartBehavior`) is never set.**
-  Nothing in the structured schema carries a run-as-context or restart-behavior
-  signal. Always flagged.
-- **Dependencies are never converted.** Graph models app-to-app dependencies as a
-  separate `mobileAppDependency`-style relationship on the app resource, not a
-  `win32LobApp` property (confirmed by its absence from the full property list this
-  phase fetched from Microsoft Learn) - that relationship API was out of scope here.
-  Always flagged when the bundle has dependencies.
-- **A `FileExists` condition using ZENworks' `notExists` operator has no direct
-  target.** `win32LobAppFileSystemRule`'s `operationType` enum has `exists` but no
-  `doesNotExist` (registry rules do have `doesNotExist`; file system rules don't -
-  this asymmetry is real, per the docs, not an oversight on my part to fix). Flagged
-  rather than inverted via a guess.
-- **A stage with zero or more than one command-line-capable action never produces a
-  command line.** Intune's win32LobApp model has exactly one `installCommandLine` and
-  one `uninstallCommandLine`; when a ZENworks ActionSet has more than one action that
-  could plausibly run something, this project does not guess which one (or what
-  combined order) belongs in that single string.
-- **`RunScript` and `InstallFiles` actions never produce a command line.** A
-  `RunScript` action's body is inline text, not a file on disk to invoke, and turning
-  it into a real command line means packaging it as a script file first (not
-  implemented). `InstallFiles` is a copy operation with no natural single executable
-  to invoke.
+- **`installCommandLine` and `uninstallCommandLine` are both derived from the single
+  `"Install MSI Action"` found in the bundle's `"Install"` ActionSet**, by prepending
+  `msiexec ` to its already-complete `installCmdLine` / `uninstallCmdLine` fragments
+  (each already includes its own `/i`/`/x` switch - see "Phase 1" item 0). This
+  replaced the old `Path`+`Arguments`+switch-injection-with-duplicate-detection logic,
+  which no longer applied to any real field. Both commands come from the *same*
+  action deliberately: the real `"Uninstall"` ActionSet's own action (`"Undo
+  Install"`) carries no data of its own in either reconciled sample - ZENworks
+  appears to reuse the Install action's own MSI uninstall command rather than storing
+  a separate one. If the Install ActionSet has zero or more than one MSI action, or is
+  missing entirely, neither command line is set and this is flagged
+  (`no_command_line_candidate` / `multiple_command_line_candidates` /
+  `action_set_missing`) rather than guessed.
+- **Requirement rules are derived from the flattened, `groupPath`-annotated condition
+  list**, but only when every recognized condition shares the same single top-level
+  group (i.e. the tree has no OR'd alternative groups at the root). If it does
+  (`groupPath[0].index` takes more than one distinct value across conditions), no
+  automatic rule conversion is attempted for *any* condition, and this is flagged
+  (`requirement_tree_has_alternatives`) - Graph's `rules` array has no verified way to
+  express "any one of these alternative condition groups," only a flat, implicitly
+  AND'd list, so silently flattening away real OR logic would misrepresent it.
+  - `RegKeyExistsReq` -> `win32LobAppRegistryRule` (`operationType: 'exists'` or
+    `'doesNotExist'` depending on the leaf's asserted boolean value), with
+    `keyPath` = the leaf's target and **`valueName: ''`**. This mapping is now
+    considered verified, not just plausible: Microsoft's own "Add, Assign, and
+    Monitor a Win32 App in Microsoft Intune" guide states "[Value name:] If this
+    value is empty, the detection will happen on the key" - i.e. an empty `valueName`
+    means "check the key's existence," which is exactly what `RegKeyExistsReq` means.
+    Checked via Microsoft Learn on 2026-07-04, not assumed.
+  - `FileExistsReq` -> `win32LobAppFileSystemRule` (`operationType: 'exists'`), but
+    **only when the leaf asserts the file must exist** (`assertedValue === true`).
+    When it asserts the file must *not* exist, this is flagged
+    (`no_inverse_file_system_rule`) rather than inverted - `win32LobAppFileSystemRule`
+    has no `doesNotExist` operation type (confirmed via Microsoft Learn; only
+    registry rules have that asymmetry-breaking option).
+  - `IPSegmentReq` has no Intune requirement rule equivalent at all and is always
+    flagged (`no_network_requirement_rule`) - none of the four verified
+    `win32LobAppRule` subtypes (file system, registry, product code, PowerShell
+    script) cover network/IP-based conditions.
+  - A leaf with no parseable boolean `Value` (`assertedValue: null`) is flagged
+    (`condition_value_undetermined`) rather than guessed either way.
+- **`returnCodes` is now permanently unset and always flagged** (`no_return_codes_derivable`).
+  The old `buildReturnCodes()` function was deleted entirely, along with its
+  `RETURN_CODE_TYPE`/`MSI_REBOOT_REQUIRED_EXIT_CODE` usage - there is no
+  `successCodes`-like construct anywhere in real ZENworks data to build it from (see
+  "Phase 1" item 0). `graphEnums.js` itself was left untouched (still an accurate,
+  Microsoft-Learn-verified reference for `win32LobAppReturnCode`'s enum, in case a
+  return-code data source is identified later), it's just no longer imported here.
+- **`applicableArchitectures` and `minimumSupportedWindowsRelease` are now permanently
+  unset and always flagged** (`architecture_signal_unavailable` / `os_signal_unavailable`).
+  The old `buildApplicableArchitectures`/`flagOperatingSystemCondition` functions
+  (which looked for `Architecture`/`OperatingSystem` condition kinds) were deleted -
+  none of the three real requirement leaf types observed (`RegKeyExistsReq`,
+  `FileExistsReq`, `IPSegmentReq`) carries architecture or OS-version information.
+  If ZENworks conveys this some other way (a different requirement leaf type not yet
+  observed, or a mechanism outside `SysReqs` entirely), it hasn't been identified.
+- **No detection rule is ever generated** (`no_detection_rule_derivable`, unchanged
+  from before, now with an updated, real-data-accurate explanation): `MSIData` carries
+  `FileName`/`Locale`/`PackageName`/`Vendor`/`Version` attributes but confirmed **no
+  `ProductCode`** in either real sample, so nothing deterministically maps to any of
+  Intune's four verified detection rule types.
+- **`installExperience` (`runAsAccount`, `deviceRestartBehavior`) is still never set**
+  and always flagged (`install_experience_undetermined`) - nothing in the structured
+  schema carries a run-as-context or restart-behavior signal. (ZENworks' MSI actions
+  do carry an `Impersonate`/`Impersonation` block with values like
+  `DYNAMIC_ADMIN_USER`, and script actions carry a `runAs` field with values like
+  `"System"` - deriving `installExperience` from these was considered but not
+  implemented in this pass: `DYNAMIC_ADMIN_USER` in particular doesn't map confidently
+  to Intune's `system`/`user` enum without guessing, and scoping a narrow,
+  script-only mapping felt like more unverified surface area than this task asked
+  for. Flagged here as a candidate follow-up rather than fabricated.)
+- **Dependencies are still never converted** (`dependency_not_convertible`) - this
+  never fires today since Phase 1 always returns an empty `dependencies` array, but
+  the check is kept (harmless) in case that changes. Graph models app-to-app
+  dependencies as a separate `mobileAppDependency`-style relationship on the app
+  resource, not a `win32LobApp` property (confirmed by its absence from the full
+  property list fetched from Microsoft Learn during the original Phase 3 build) -
+  that relationship API remains out of scope.
 - No PowerShell cmdlets of any kind (Graph SDK or otherwise) are generated or
   referenced anywhere in this codebase - the engine only produces the JSON payload,
   not automation scripts.

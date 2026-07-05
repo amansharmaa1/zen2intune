@@ -1,91 +1,90 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 
+import { parseBundleXml } from '../src/parser/parseBundle.js';
 import { normalizeBundle } from '../src/schema/normalize.js';
 import { convertToIntunePackage } from '../src/intune/convertBundle.js';
-import { legacyRawBasicBundle, legacyRawUnknownConstructsBundle } from './legacyRawBundles.js';
 
-// See test/legacyRawBundles.js for why these tests use hand-built legacy-shaped
-// raw bundles instead of test/fixtures/*.xml (which are real-shaped as of
-// 2026-07-04 and not yet consumable by normalize.js/convertBundle.js).
-function structuredFromLegacyRaw(rawBuilder) {
-  return normalizeBundle(rawBuilder());
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+function fixture(name) {
+  return readFileSync(path.join(__dirname, 'fixtures', name), 'utf8');
+}
+
+function structuredFromFixture(name) {
+  return normalizeBundle(parseBundleXml(fixture(name)));
 }
 
 function codesOf(needsReview) {
   return needsReview.map((r) => r.code);
 }
 
-test('converts a well-formed bundle: derives what it can, flags the rest', () => {
-  const structured = structuredFromLegacyRaw(legacyRawBasicBundle);
+test('converts a well-formed, real-shaped bundle: derives ready-made MSI command lines, flags the rest', () => {
+  const structured = structuredFromFixture('sample-bundle-basic.xml');
   const { app, needsReview } = convertToIntunePackage(structured);
 
   assert.equal(app['@odata.type'], '#microsoft.graph.win32LobApp');
-  assert.equal(app.displayName, 'Sample Application 1.0');
+  assert.equal(app.displayName, 'Sample MSI App - Install');
 
-  // Exactly one command-line-capable action per stage -> deterministic derivation.
-  assert.equal(app.installCommandLine, 'msiexec /i "%ZENCACHE%\\SampleApp\\SampleApp.msi" /qn REBOOT=ReallySuppress');
-  assert.equal(app.uninstallCommandLine, 'msiexec /x "%ZENCACHE%\\SampleApp\\SampleApp.msi" /x /qn');
+  // Both install and uninstall command lines come from the SAME MSI action in
+  // the Install ActionSet (msiexec prepended to the ready-made CmdLine
+  // fragment) - the real Uninstall ActionSet's own action carries no data.
+  assert.equal(
+    app.installCommandLine,
+    'msiexec /i "ExampleApp-1.0.0-x64.msi" /qn EXAMPLE_GROUP="Example Group" EXAMPLE_SERVER="example.invalid:443"',
+  );
+  assert.equal(app.uninstallCommandLine, 'msiexec /x "ExampleApp-1.0.0-x64.msi" /qn');
 
-  // Architecture condition value "x64" matches the verified windowsArchitecture enum.
-  assert.equal(app.applicableArchitectures, 'x64');
-
-  // 0 stays "success"; 3010 is the well-known MSI reboot-required code.
-  assert.deepEqual(app.returnCodes, [
-    { '@odata.type': '#microsoft.graph.win32LobAppReturnCode', returnCode: 0, type: 'success' },
-    { '@odata.type': '#microsoft.graph.win32LobAppReturnCode', returnCode: 3010, type: 'softReboot' },
-  ]);
-
-  // No product code / registry / script signal exists anywhere in our schema,
-  // so a detection rule can never be derived - this must always be flagged.
-  assert.deepEqual(app.rules, []);
   const codes = codesOf(needsReview);
+
+  // This fixture's requirement tree OR's together two alternative top-level
+  // groups - no automatic rule conversion is attempted for any condition.
+  assert.deepEqual(app.rules, []);
+  assert.ok(codes.includes('requirement_tree_has_alternatives'));
+  assert.ok(!codes.includes('no_inverse_file_system_rule'));
+  assert.ok(!codes.includes('no_network_requirement_rule'));
+
+  // Permanent, always-present gaps given current real-data field extraction.
   assert.ok(codes.includes('no_detection_rule_derivable'));
-
-  // The RunScript install action can't become a command line on its own.
-  assert.ok(codes.includes('action_excluded_from_conversion'));
-
-  // The uninstall action's own Arguments ("/x /qn") duplicate the "/x" the
-  // generator adds based on stage - this must be surfaced, not silently doubled.
-  assert.ok(codes.includes('command_line_needs_verification'));
-
-  // OperatingSystem condition exists but has no verified target mapping.
-  assert.ok(codes.includes('os_condition_needs_manual_mapping'));
-
-  // FileExists condition uses "notExists", which file system rules can't express.
-  assert.ok(codes.includes('no_inverse_file_system_rule'));
-
-  // The bundle has a dependency, which win32LobApp has no property for.
-  assert.ok(codes.includes('dependency_not_convertible'));
-
-  // Nothing in the schema indicates run-as/restart behavior.
+  assert.ok(codes.includes('architecture_signal_unavailable'));
+  assert.ok(codes.includes('os_signal_unavailable'));
+  assert.ok(codes.includes('no_return_codes_derivable'));
   assert.ok(codes.includes('install_experience_undetermined'));
+
+  // Both ActionSets are present and the Install ActionSet has exactly one
+  // usable action, so none of the "missing" signals should fire.
+  assert.ok(!codes.includes('action_set_missing'));
+  assert.ok(!codes.includes('uninstall_action_set_missing'));
+  assert.ok(!codes.includes('no_command_line_candidate'));
+  assert.ok(!codes.includes('dependency_not_convertible'));
 });
 
-test('never fabricates a command line, architecture, or rule for unrecognized constructs', () => {
-  const structured = structuredFromLegacyRaw(legacyRawUnknownConstructsBundle);
+test('never fabricates a command line or rule for unrecognized real-shaped constructs', () => {
+  const structured = structuredFromFixture('sample-bundle-unknown-constructs.xml');
   const { app, needsReview } = convertToIntunePackage(structured);
 
   assert.equal(app.displayName, 'Legacy Tool');
   assert.equal(app.installCommandLine, undefined);
   assert.equal(app.uninstallCommandLine, undefined);
-  assert.equal(app.applicableArchitectures, undefined);
-  assert.equal(app.returnCodes, undefined);
   assert.deepEqual(app.rules, []);
 
   const codes = codesOf(needsReview);
-  assert.ok(codes.includes('action_excluded_from_conversion')); // RegistrySweep
-  assert.ok(codes.includes('no_command_line_candidate')); // Install set has no usable action
-  assert.ok(codes.includes('action_set_missing')); // no Uninstall set at all
-  assert.ok(codes.includes('dependency_not_convertible'));
+  assert.ok(codes.includes('action_set_missing')); // no "Install" ActionSet in this fixture at all
+  assert.ok(codes.includes('uninstall_action_set_missing')); // nor "Uninstall"
+  assert.ok(codes.includes('action_set_excluded_from_conversion')); // "PreInstall" is unrecognized
+  assert.ok(codes.includes('condition_excluded_from_conversion')); // "RegistryValueVersionReq" is unrecognized
+  assert.ok(!codes.includes('requirement_tree_has_alternatives')); // only one (unrecognized) condition - no ambiguity to flag
 });
 
-test('flags an unmappable architecture value instead of guessing', () => {
+test('builds a registry requirement rule for a RegKeyExistsReq condition (verified: empty valueName checks key existence)', () => {
   const structured = {
-    schemaVersion: '1.0.0',
-    bundle: { name: 'Arm App', guid: 'g', type: 'Install', version: null },
+    schemaVersion: '2.0.0',
+    bundle: { uid: 'x', name: 'X', internalName: null, parentUid: null, path: null, adminId: null, description: null, primaryType: null, subType: null, category: null, version: null, displayName: null, creationDate: null },
     conditions: [
-      { kind: 'Architecture', operator: 'equals', value: 'ARM64', recognized: true, sourcePath: '/x' },
+      { reqType: 'RegKeyExistsReq', recognized: true, assertedValue: true, target: 'HKEY_LOCAL_MACHINE\\SOFTWARE\\ExampleVendor\\Policy', groupPath: [{ conjunction: 'AND', index: 0 }], sourcePath: '/x' },
     ],
     dependencies: [],
     actionSets: [],
@@ -93,16 +92,42 @@ test('flags an unmappable architecture value instead of guessing', () => {
   };
 
   const { app, needsReview } = convertToIntunePackage(structured);
-  assert.equal(app.applicableArchitectures, undefined);
-  assert.ok(codesOf(needsReview).includes('architecture_not_mappable'));
+  assert.deepEqual(app.rules, [
+    {
+      '@odata.type': '#microsoft.graph.win32LobAppRegistryRule',
+      ruleType: 'requirement',
+      keyPath: 'HKEY_LOCAL_MACHINE\\SOFTWARE\\ExampleVendor\\Policy',
+      valueName: '',
+      operationType: 'exists',
+      operator: 'notConfigured',
+    },
+  ]);
+  assert.ok(!codesOf(needsReview).includes('condition_value_undetermined'));
 });
 
-test('builds a file-system requirement rule for an affirmative FileExists condition', () => {
+test('builds a doesNotExist registry rule when the condition asserts the key must be absent', () => {
   const structured = {
-    schemaVersion: '1.0.0',
-    bundle: { name: 'X', guid: 'g', type: 'Install', version: null },
+    schemaVersion: '2.0.0',
+    bundle: { uid: 'x', name: 'X', internalName: null, parentUid: null, path: null, adminId: null, description: null, primaryType: null, subType: null, category: null, version: null, displayName: null, creationDate: null },
     conditions: [
-      { kind: 'FileExists', operator: 'exists', value: 'C:\\Tools\\agent.exe', recognized: true, sourcePath: '/x' },
+      { reqType: 'RegKeyExistsReq', recognized: true, assertedValue: false, target: 'HKEY_LOCAL_MACHINE\\SOFTWARE\\ExampleVendor\\Uninstalled', groupPath: [{ conjunction: 'AND', index: 0 }], sourcePath: '/x' },
+    ],
+    dependencies: [],
+    actionSets: [],
+    needsReview: [],
+  };
+
+  const { app } = convertToIntunePackage(structured);
+  assert.equal(app.rules[0].operationType, 'doesNotExist');
+});
+
+test('builds a file-system requirement rule for an affirmative FileExistsReq condition, but flags the inverse case', () => {
+  const structured = {
+    schemaVersion: '2.0.0',
+    bundle: { uid: 'x', name: 'X', internalName: null, parentUid: null, path: null, adminId: null, description: null, primaryType: null, subType: null, category: null, version: null, displayName: null, creationDate: null },
+    conditions: [
+      { reqType: 'FileExistsReq', recognized: true, assertedValue: true, target: 'C:\\Tools\\agent.exe', groupPath: [{ conjunction: 'AND', index: 0 }], sourcePath: '/x0' },
+      { reqType: 'FileExistsReq', recognized: true, assertedValue: false, target: 'C:\\Tools\\uninstalled.exe', groupPath: [{ conjunction: 'AND', index: 0 }], sourcePath: '/x1' },
     ],
     dependencies: [],
     actionSets: [],
@@ -120,28 +145,69 @@ test('builds a file-system requirement rule for an affirmative FileExists condit
       operator: 'notConfigured',
     },
   ]);
-  assert.ok(!codesOf(needsReview).includes('no_inverse_file_system_rule'));
+  assert.ok(codesOf(needsReview).includes('no_inverse_file_system_rule'));
 });
 
-test('refuses to pick a command line when a stage has multiple candidate actions', () => {
+test('flags IPSegmentReq as unconvertible - no Intune requirement rule type covers network conditions', () => {
   const structured = {
-    schemaVersion: '1.0.0',
-    bundle: { name: 'X', guid: 'g', type: 'Install', version: null },
+    schemaVersion: '2.0.0',
+    bundle: { uid: 'x', name: 'X', internalName: null, parentUid: null, path: null, adminId: null, description: null, primaryType: null, subType: null, category: null, version: null, displayName: null, creationDate: null },
+    conditions: [
+      { reqType: 'IPSegmentReq', recognized: true, assertedValue: true, target: '203.0.113.0/24', groupPath: [{ conjunction: 'AND', index: 0 }], sourcePath: '/x' },
+    ],
+    dependencies: [],
+    actionSets: [],
+    needsReview: [],
+  };
+
+  const { app, needsReview } = convertToIntunePackage(structured);
+  assert.deepEqual(app.rules, []);
+  assert.ok(codesOf(needsReview).includes('no_network_requirement_rule'));
+});
+
+test('flags a condition with no boolean Value instead of guessing exists vs. doesNotExist', () => {
+  const structured = {
+    schemaVersion: '2.0.0',
+    bundle: { uid: 'x', name: 'X', internalName: null, parentUid: null, path: null, adminId: null, description: null, primaryType: null, subType: null, category: null, version: null, displayName: null, creationDate: null },
+    conditions: [
+      { reqType: 'RegKeyExistsReq', recognized: true, assertedValue: null, target: 'HKEY_LOCAL_MACHINE\\SOFTWARE\\X', groupPath: [{ conjunction: 'AND', index: 0 }], sourcePath: '/x' },
+    ],
+    dependencies: [],
+    actionSets: [],
+    needsReview: [],
+  };
+
+  const { app, needsReview } = convertToIntunePackage(structured);
+  assert.deepEqual(app.rules, []);
+  assert.ok(codesOf(needsReview).includes('condition_value_undetermined'));
+});
+
+test('refuses to pick a command line when the Install ActionSet has multiple MSI candidate actions', () => {
+  const structured = {
+    schemaVersion: '2.0.0',
+    bundle: { uid: 'x', name: 'X', internalName: null, parentUid: null, path: null, adminId: null, description: null, primaryType: null, subType: null, category: null, version: null, displayName: null, creationDate: null },
     conditions: [],
     dependencies: [],
     actionSets: [
       {
+        id: 'set-0',
         stage: 'Install',
         recognized: true,
+        version: '1',
+        modified: false,
         sourcePath: '/a',
         actions: [
           {
-            kind: 'InstallMsi', order: 1, successCodes: [0], recognized: true, complete: true, sourcePath: '/a/0',
-            fields: { path: 'a.msi', arguments: null, workingDirectory: null, scriptType: null, scriptBody: null, sourcePath: null, destinationPath: null },
+            id: 'a0', name: null, kind: 'Install MSI Action', recognized: true, complete: true,
+            enabled: true, continueOnFailure: false, linkedObjectIds: null,
+            fields: { fileName: 'a.msi', installCmdLine: '/i "a.msi" /qn', repairCmdLine: null, uninstallCmdLine: '/x "a.msi" /qn', properties: [] },
+            sourcePath: '/a/0',
           },
           {
-            kind: 'InstallMsi', order: 2, successCodes: [0], recognized: true, complete: true, sourcePath: '/a/1',
-            fields: { path: 'b.msi', arguments: null, workingDirectory: null, scriptType: null, scriptBody: null, sourcePath: null, destinationPath: null },
+            id: 'a1', name: null, kind: 'Install MSI Action', recognized: true, complete: true,
+            enabled: true, continueOnFailure: false, linkedObjectIds: null,
+            fields: { fileName: 'b.msi', installCmdLine: '/i "b.msi" /qn', repairCmdLine: null, uninstallCmdLine: '/x "b.msi" /qn', properties: [] },
+            sourcePath: '/a/1',
           },
         ],
       },
@@ -151,7 +217,22 @@ test('refuses to pick a command line when a stage has multiple candidate actions
 
   const { app, needsReview } = convertToIntunePackage(structured);
   assert.equal(app.installCommandLine, undefined);
+  assert.equal(app.uninstallCommandLine, undefined);
   assert.ok(codesOf(needsReview).includes('multiple_command_line_candidates'));
+});
+
+test('flags a dependency as unconvertible if the structured bundle ever carries one', () => {
+  const structured = {
+    schemaVersion: '2.0.0',
+    bundle: { uid: 'x', name: 'X', internalName: null, parentUid: null, path: null, adminId: null, description: null, primaryType: null, subType: null, category: null, version: null, displayName: null, creationDate: null },
+    conditions: [],
+    dependencies: [{ note: 'shape not yet verified against real data - see NEEDS_REVIEW.md' }],
+    actionSets: [],
+    needsReview: [],
+  };
+
+  const { needsReview } = convertToIntunePackage(structured);
+  assert.ok(codesOf(needsReview).includes('dependency_not_convertible'));
 });
 
 test('throws on a structurally invalid input instead of producing a partial guess', () => {

@@ -1,72 +1,74 @@
-// NOTE: this deliberately imports the LEGACY_* (fictitious, pre-2026-07-04)
-// vocabulary constants, not the real ones src/parser/parseBundle.js now uses -
-// this module was not updated in the real-bundle reconciliation and still
-// targets the original invented Phase 1 shape. See NEEDS_REVIEW.md
-// ("Phase 1 - XML parser" item 0) and the comment above the LEGACY_* exports
-// in knownTypes.js.
 import {
-  LEGACY_KNOWN_ACTION_TYPES as KNOWN_ACTION_TYPES,
-  LEGACY_KNOWN_REQUIREMENT_FILTER_TYPES as KNOWN_REQUIREMENT_FILTER_TYPES,
-  LEGACY_KNOWN_DEPENDENCY_TYPES as KNOWN_DEPENDENCY_TYPES,
-  LEGACY_KNOWN_ACTION_SET_TYPES as KNOWN_ACTION_SET_TYPES,
+  KNOWN_ACTION_TYPES,
+  KNOWN_REQUIREMENT_LEAF_TYPES,
+  KNOWN_ACTION_SET_TYPES,
 } from '../parser/knownTypes.js';
 import { BUNDLE_SCHEMA_VERSION } from './bundleSchema.js';
 
 // Fields that must be present for a *recognized* action kind to be considered
-// complete. Unrecognized kinds are never marked complete - completeness of an
-// action type we don't understand isn't ours to guess at (see CLAUDE.md).
+// complete. Only the two action kinds this project deeply extracts fields for
+// have an entry - see src/parser/parseBundle.js. A recognized kind with no
+// entry here (e.g. "Verify Install", "Undo Install", "Terminate Action" -
+// real ZENworks action types this project doesn't deeply parse Data for) is
+// treated as complete: there's nothing we check for it, so nothing is known
+// to be missing. This is different from an *unrecognized* kind, which is
+// always incomplete (see below) - completeness of a construct we don't
+// understand at all isn't derivable.
 const REQUIRED_FIELDS_BY_ACTION_KIND = {
-  InstallMsi: ['path'],
-  RunScript: ['scriptBody'],
-  LaunchExecutable: ['path'],
-  InstallFiles: ['sourcePath', 'destinationPath'],
+  'Install MSI Action': ['installCmdLine'],
+  'Run Script Action': ['scriptBody'],
 };
 
 function isActionComplete(kind, fields) {
   const required = REQUIRED_FIELDS_BY_ACTION_KIND[kind];
-  if (!required) return false;
+  if (!required) return true;
   return required.every((fieldName) => Boolean(fields[fieldName]));
 }
 
 /**
- * Maps Phase 1's raw parser output into the canonical structured JSON shape
- * defined in bundleSchema.js. Purely mechanical restructuring plus recognized/
- * complete flagging against the same known-type vocabulary the parser uses -
- * no inference, no AI, nothing that isn't directly derivable from the input.
+ * Maps Phase 1's raw parser output (real ZENworks bundle shape - see
+ * NEEDS_REVIEW.md "Phase 1 - XML parser" item 0) into the canonical structured
+ * JSON shape defined in bundleSchema.js. Purely mechanical restructuring plus
+ * recognized/complete flagging against the same known-type vocabulary the
+ * parser uses - no inference, no AI, nothing that isn't directly derivable
+ * from the input.
  */
 export function normalizeBundle(rawParsed) {
   const { bundle, requirements, dependencies, actionSets, warnings } = rawParsed;
 
   const conditions = requirements.map((requirement) => ({
-    kind: requirement.type,
-    operator: requirement.operator,
-    value: requirement.value,
-    recognized: requirement.type !== null && KNOWN_REQUIREMENT_FILTER_TYPES.includes(requirement.type),
+    reqType: requirement.reqType,
+    recognized: requirement.reqType !== null && KNOWN_REQUIREMENT_LEAF_TYPES.includes(requirement.reqType),
+    assertedValue: requirement.assertedValue,
+    target: requirement.target,
+    groupPath: requirement.groupPath,
     sourcePath: requirement.path,
   }));
 
-  const normalizedDependencies = dependencies.map((dependency) => ({
-    kind: dependency.type,
-    name: dependency.name,
-    guid: dependency.guid,
-    required: dependency.required,
-    recognized: dependency.type !== null && KNOWN_DEPENDENCY_TYPES.includes(dependency.type),
-    sourcePath: dependency.path,
-  }));
+  // Always empty today - no real bundle-to-bundle dependency reference
+  // construct has been observed (see NEEDS_REVIEW.md), so there's no known
+  // shape to map. Passed through unchanged rather than transformed.
+  const normalizedDependencies = dependencies;
 
   const normalizedActionSets = actionSets.map((actionSet) => ({
+    id: actionSet.id,
     stage: actionSet.type,
     recognized: actionSet.type !== null && KNOWN_ACTION_SET_TYPES.includes(actionSet.type),
+    version: actionSet.version,
+    modified: actionSet.modified,
     sourcePath: actionSet.path,
     actions: actionSet.actions.map((action) => {
       const recognized = action.type !== null && KNOWN_ACTION_TYPES.includes(action.type);
       return {
+        id: action.id,
+        name: action.name,
         kind: action.type,
-        order: action.order,
-        successCodes: action.successCodes,
-        fields: action.fields,
         recognized,
         complete: recognized && isActionComplete(action.type, action.fields),
+        enabled: action.enabled,
+        continueOnFailure: action.continueOnFailure,
+        linkedObjectIds: action.linkedObjectIds,
+        fields: action.fields,
         sourcePath: action.path,
       };
     }),

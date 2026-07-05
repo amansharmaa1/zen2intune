@@ -1,77 +1,121 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 
+import { parseBundleXml } from '../src/parser/parseBundle.js';
 import { normalizeBundle } from '../src/schema/normalize.js';
 import { validateStructuredBundle, BUNDLE_SCHEMA_VERSION } from '../src/schema/bundleSchema.js';
 import { validateAgainstSchema } from '../src/schema/jsonSchemaValidator.js';
-import { legacyRawBasicBundle, legacyRawUnknownConstructsBundle } from './legacyRawBundles.js';
 
-test('normalizes a well-formed bundle into schema-valid structured JSON', () => {
-  const raw = legacyRawBasicBundle();
-  const structured = normalizeBundle(raw);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+function fixture(name) {
+  return readFileSync(path.join(__dirname, 'fixtures', name), 'utf8');
+}
+
+function structuredFromFixture(name) {
+  return normalizeBundle(parseBundleXml(fixture(name)));
+}
+
+test('normalizes a well-formed, real-shaped bundle into schema-valid structured JSON', () => {
+  const structured = structuredFromFixture('sample-bundle-basic.xml');
 
   const { valid, errors } = validateStructuredBundle(structured);
   assert.deepEqual(errors, []);
   assert.equal(valid, true);
 
   assert.equal(structured.schemaVersion, BUNDLE_SCHEMA_VERSION);
-  assert.equal(structured.bundle.name, 'Sample Application 1.0');
+  assert.equal(structured.bundle.uid, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+  assert.equal(structured.bundle.name, 'Sample MSI App - Install');
 
   assert.equal(structured.conditions.length, 3);
   assert.ok(structured.conditions.every((c) => c.recognized === true));
+  assert.deepEqual(
+    structured.conditions.map((c) => c.reqType),
+    ['RegKeyExistsReq', 'FileExistsReq', 'IPSegmentReq'],
+  );
+  // groupPath ancestry survives normalization unchanged.
+  assert.deepEqual(structured.conditions[2].groupPath, [
+    { conjunction: 'OR', index: 1 },
+    { conjunction: 'AND', index: 0 },
+  ]);
 
-  assert.equal(structured.dependencies.length, 1);
-  assert.equal(structured.dependencies[0].recognized, true);
+  assert.deepEqual(structured.dependencies, []);
 
+  assert.equal(structured.actionSets.length, 6);
   const installSet = structured.actionSets.find((s) => s.stage === 'Install');
   assert.ok(installSet.recognized);
-  assert.ok(installSet.actions.every((a) => a.recognized && a.complete));
+  const msiAction = installSet.actions.find((a) => a.kind === 'Install MSI Action');
+  assert.ok(msiAction.recognized);
+  assert.ok(msiAction.complete);
+  assert.equal(msiAction.fields.fileName, 'ExampleApp-1.0.0-x64.msi');
 
-  // A fully well-formed, fully recognized bundle should have nothing to review.
+  const undoInstallAction = structured.actionSets.find((s) => s.stage === 'Uninstall').actions[0];
+  assert.equal(undoInstallAction.kind, 'Undo Install');
+  assert.equal(undoInstallAction.recognized, true);
+  // Recognized action kinds with no completeness criteria (nothing deeply
+  // parsed for them) are vacuously complete - see normalize.js.
+  assert.equal(undoInstallAction.complete, true);
+
+  // Fully well-formed, fully recognized real-shaped bundle: nothing flagged.
   assert.deepEqual(structured.needsReview, []);
 });
 
-test('flags unrecognized conditions/dependencies/actions as not-recognized, and surfaces needsReview, while remaining schema-valid', () => {
-  const raw = legacyRawUnknownConstructsBundle();
-  const structured = normalizeBundle(raw);
+test('flags unrecognized requirement/action-set/action types as not-recognized, and surfaces needsReview, while remaining schema-valid', () => {
+  const structured = structuredFromFixture('sample-bundle-unknown-constructs.xml');
 
   const { valid, errors } = validateStructuredBundle(structured);
   assert.deepEqual(errors, []);
   assert.equal(valid, true);
 
-  assert.equal(structured.conditions[0].kind, 'CustomZenAppFingerprint');
+  assert.equal(structured.conditions[0].reqType, 'RegistryValueVersionReq');
   assert.equal(structured.conditions[0].recognized, false);
 
-  assert.equal(structured.dependencies[0].name, null);
-  assert.equal(structured.dependencies[0].recognized, true); // type "Bundle" is known; only name is missing
+  const actionSet = structured.actionSets[0];
+  assert.equal(actionSet.stage, 'PreInstall');
+  assert.equal(actionSet.recognized, false);
 
-  const action = structured.actionSets[0].actions[0];
-  assert.equal(action.kind, 'RegistrySweep');
+  const action = actionSet.actions[0];
+  assert.equal(action.kind, 'Custom Legacy Action');
   assert.equal(action.recognized, false);
   assert.equal(action.complete, false); // unrecognized kinds are never marked complete
 
-  assert.ok(structured.needsReview.length > 0);
-  assert.ok(structured.needsReview.some((item) => item.code === 'unknown_action_type'));
+  const codes = structured.needsReview.map((item) => item.code);
+  assert.ok(codes.includes('unknown_requirement_type'));
+  assert.ok(codes.includes('unknown_action_set_type'));
+  assert.ok(codes.includes('unknown_action_type'));
 });
 
-test('marks a known action kind incomplete when a required field is missing', () => {
-  // Deterministic, hand-built raw input (bypassing the XML layer) to isolate
-  // normalize()'s completeness logic from the parser.
+test('marks a known action kind incomplete when its required field is missing', () => {
+  // Hand-built, real-vocabulary raw input (bypassing the XML layer) to
+  // isolate normalize()'s completeness logic from the parser.
   const raw = {
-    bundle: { name: 'X', guid: 'g', type: 'Install', version: null },
+    bundle: {
+      uid: 'x', name: 'X', internalName: null, parentUid: null, path: null, adminId: null,
+      description: null, primaryType: null, subType: null, category: null, version: null,
+      displayName: null, creationDate: null,
+    },
     requirements: [],
     dependencies: [],
     actionSets: [
       {
+        id: 'set-0',
         type: 'Install',
-        path: '/Bundle/ActionSets/ActionSet[0]',
+        version: '1',
+        modified: false,
+        path: '/Bundle/ActionSets[0]',
         actions: [
           {
-            type: 'InstallMsi',
-            order: 1,
-            successCodes: [0],
-            fields: { path: null, arguments: null, workingDirectory: null, scriptType: null, scriptBody: null, sourcePath: null, destinationPath: null },
-            path: '/Bundle/ActionSets/ActionSet[0]/Action[0]',
+            id: 'action-0',
+            name: 'Install MSI',
+            type: 'Install MSI Action',
+            enabled: true,
+            continueOnFailure: false,
+            linkedObjectIds: null,
+            fields: { fileName: 'App.msi', installCmdLine: null, repairCmdLine: null, uninstallCmdLine: null, properties: [] },
+            path: '/Bundle/ActionSets[0]/Actions[0]',
           },
         ],
       },
@@ -82,13 +126,13 @@ test('marks a known action kind incomplete when a required field is missing', ()
   const structured = normalizeBundle(raw);
   const action = structured.actionSets[0].actions[0];
   assert.equal(action.recognized, true);
-  assert.equal(action.complete, false);
+  assert.equal(action.complete, false); // installCmdLine is missing
 });
 
 test('validator rejects structurally invalid data with a descriptive error', () => {
   const badData = {
-    schemaVersion: '1.0.0',
-    bundle: { name: 'X', type: 'Install', version: null }, // missing required "guid"
+    schemaVersion: '2.0.0',
+    bundle: { name: 'X' }, // missing required "uid" and other bundle fields
     conditions: [],
     dependencies: [],
     actionSets: [],
@@ -97,7 +141,7 @@ test('validator rejects structurally invalid data with a descriptive error', () 
 
   const { valid, errors } = validateStructuredBundle(badData);
   assert.equal(valid, false);
-  assert.ok(errors.some((e) => e.includes('guid')));
+  assert.ok(errors.some((e) => e.includes('uid')));
 });
 
 test('validator generic helper reports type mismatches with a path', () => {
