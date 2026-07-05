@@ -238,3 +238,91 @@ test('flags a dependency as unconvertible if the structured bundle ever carries 
 test('throws on a structurally invalid input instead of producing a partial guess', () => {
   assert.throws(() => convertToIntunePackage({ not: 'a structured bundle' }));
 });
+
+// --- MSI-derived detection rule / msiInformation (options.msiProductInfo) ---
+
+const fakeMsiProductInfo = Object.freeze({
+  productCode: '{11111111-2222-3333-4444-555555555555}',
+  productVersion: '1.0.0',
+  productName: 'Synthetic Test App',
+  manufacturer: 'Synthetic Vendor',
+  upgradeCode: '{AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE}',
+  allUsers: '1',
+});
+
+test('emits a ProductCode detection rule, msiInformation, publisher, and fileName/setupFilePath when msiProductInfo is supplied', () => {
+  const structured = structuredFromFixture('sample-bundle-basic.xml');
+  const { app, needsReview } = convertToIntunePackage(structured, { msiProductInfo: fakeMsiProductInfo });
+
+  const detectionRules = app.rules.filter((r) => r.ruleType === 'detection');
+  assert.deepEqual(detectionRules, [
+    {
+      '@odata.type': '#microsoft.graph.win32LobAppProductCodeRule',
+      ruleType: 'detection',
+      productCode: '{11111111-2222-3333-4444-555555555555}',
+      productVersionOperator: 'notConfigured',
+    },
+  ]);
+
+  assert.deepEqual(app.msiInformation, {
+    '@odata.type': '#microsoft.graph.win32LobAppMsiInformation',
+    productCode: '{11111111-2222-3333-4444-555555555555}',
+    productVersion: '1.0.0',
+    upgradeCode: '{AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE}',
+    productName: 'Synthetic Test App',
+    publisher: 'Synthetic Vendor',
+    packageType: 'perMachine', // ALLUSERS=1 => per-machine, per Microsoft's ALLUSERS doc
+  });
+
+  assert.equal(app.publisher, 'Synthetic Vendor');
+  assert.equal(app.fileName, 'ExampleApp-1.0.0-x64.msi');
+  assert.equal(app.setupFilePath, 'ExampleApp-1.0.0-x64.msi');
+
+  const codes = codesOf(needsReview);
+  assert.ok(!codes.includes('no_detection_rule_derivable'));
+  assert.ok(!codes.includes('msi_package_type_undetermined'));
+});
+
+test('maps an MSI with no ALLUSERS property to perUser (documented default context)', () => {
+  const structured = structuredFromFixture('sample-bundle-basic.xml');
+  const { app } = convertToIntunePackage(structured, {
+    msiProductInfo: { ...fakeMsiProductInfo, allUsers: null },
+  });
+  assert.equal(app.msiInformation.packageType, 'perUser');
+});
+
+test('flags ALLUSERS=2 instead of guessing a packageType', () => {
+  const structured = structuredFromFixture('sample-bundle-basic.xml');
+  const { app, needsReview } = convertToIntunePackage(structured, {
+    msiProductInfo: { ...fakeMsiProductInfo, allUsers: '2' },
+  });
+  assert.equal(app.msiInformation.packageType, undefined);
+  assert.ok(codesOf(needsReview).includes('msi_package_type_undetermined'));
+});
+
+test('omits optional msiInformation fields the MSI does not carry, rather than inventing them', () => {
+  const structured = structuredFromFixture('sample-bundle-basic.xml');
+  const { app } = convertToIntunePackage(structured, {
+    msiProductInfo: {
+      productCode: '{11111111-2222-3333-4444-555555555555}',
+      productVersion: null,
+      productName: null,
+      manufacturer: null,
+      upgradeCode: null,
+      allUsers: '1',
+    },
+  });
+  assert.deepEqual(app.msiInformation, {
+    '@odata.type': '#microsoft.graph.win32LobAppMsiInformation',
+    productCode: '{11111111-2222-3333-4444-555555555555}',
+    packageType: 'perMachine',
+  });
+  assert.equal(app.publisher, undefined);
+});
+
+test('throws when msiProductInfo carries a malformed productCode instead of emitting a broken rule', () => {
+  const structured = structuredFromFixture('sample-bundle-basic.xml');
+  assert.throws(() =>
+    convertToIntunePackage(structured, { msiProductInfo: { ...fakeMsiProductInfo, productCode: 'not-a-guid' } }),
+  );
+});

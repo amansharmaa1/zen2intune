@@ -1,12 +1,31 @@
 import path from 'node:path';
 import { validateStructuredBundle } from '../schema/bundleSchema.js';
+import { MSI_GUID_PATTERN } from '../msi/readMsiProductInfo.js';
 
 // Deterministic Intune Win32 app conversion engine.
 //
 // Rewritten on 2026-07-04 to consume the *real* ZENworks-shaped structured
 // bundle (see NEEDS_REVIEW.md, "Phase 1 - XML parser" item 0 and "Phase 2/3 -
 // rewritten for real data" below), replacing an earlier version built against
-// an invented Phase 1 shape.
+// an invented Phase 1 shape. Extended on 2026-07-05 with a ProductCode-based
+// detection rule + msiInformation, fed by MSI Property-table data read from
+// the actual installer binary (src/msi/readMsiProductInfo.js) - the bundle
+// XML itself carries no ProductCode anywhere.
+//
+// Graph schema re-verified against Microsoft Learn (v1.0) on 2026-07-05:
+//   win32LobApp (rules / msiInformation / setupFilePath / fileName):
+//     https://learn.microsoft.com/graph/api/resources/intune-apps-win32lobapp?view=graph-rest-1.0
+//   win32LobAppRule (base; ruleType: detection | requirement):
+//     https://learn.microsoft.com/graph/api/resources/intune-apps-win32lobapprule?view=graph-rest-1.0
+//   win32LobAppProductCodeRule ("This rule is not supported as a requirement
+//   rule" - i.e. detection-only):
+//     https://learn.microsoft.com/graph/api/resources/intune-apps-win32lobappproductcoderule?view=graph-rest-1.0
+//   win32LobAppMsiInformation:
+//     https://learn.microsoft.com/graph/api/resources/intune-apps-win32lobappmsiinformation?view=graph-rest-1.0
+// Note: there is no v1.0 type named "win32LobAppDetectionRule" - on v1.0,
+// detection rules are win32LobAppRule subtypes with ruleType "detection".
+// The separate win32LobAppDetection hierarchy (win32LobAppProductCodeDetection
+// etc.) is beta-only; this project targets v1.0 as Microsoft recommends.
 //
 // This module performs NO inference and calls NO AI - it only fills in a Graph
 // win32LobApp field when the mapping is either (a) a direct, unambiguous copy of
@@ -16,10 +35,10 @@ import { validateStructuredBundle } from '../schema/bundleSchema.js';
 // guessed at - per CLAUDE.md.
 //
 // Known, deliberate gaps (see NEEDS_REVIEW.md for the full explanation):
-//   - No detection rule can ever be produced yet: MSIData (the only action type
-//     with deeply-parsed fields) carries FileName/Locale/PackageName/Vendor/
-//     Version attributes but no ProductCode - nothing here deterministically
-//     maps to any of Intune's detection rule types. Always flagged.
+//   - A detection rule is produced ONLY when the caller supplies
+//     options.msiProductInfo (read from the real MSI binary). Without it,
+//     nothing in the bundle XML deterministically maps to any of Intune's
+//     detection rule types - flagged, never guessed.
 //   - applicableArchitectures / minimumSupportedWindowsRelease are never set:
 //     none of the three real requirement leaf types observed (RegKeyExistsReq,
 //     FileExistsReq, IPSegmentReq) conveys architecture or OS-version
@@ -227,17 +246,84 @@ function buildRequirementRules(conditions, needsReview) {
   return rules;
 }
 
+// --- MSI-derived detection rule and msiInformation ----------------------------
+//
+// Fed by options.msiProductInfo, which src/msi/readMsiProductInfo.js reads
+// from the actual MSI binary's Property table (the only non-fabricated source
+// for a ProductCode - the bundle XML has none). Shapes verified on Microsoft
+// Learn 2026-07-05; URLs in the module header.
+
+function buildProductCodeDetectionRule(msiProductInfo) {
+  // win32LobAppProductCodeRule is detection-only per its v1.0 doc page.
+  // productVersionOperator "notConfigured" = detect the product at any
+  // version (matching Intune's default when no version check is configured).
+  return {
+    '@odata.type': '#microsoft.graph.win32LobAppProductCodeRule',
+    ruleType: 'detection',
+    productCode: msiProductInfo.productCode,
+    productVersionOperator: 'notConfigured',
+  };
+}
+
+function buildMsiInformation(msiProductInfo, needsReview) {
+  const msiInformation = {
+    '@odata.type': '#microsoft.graph.win32LobAppMsiInformation',
+    productCode: msiProductInfo.productCode,
+  };
+  if (msiProductInfo.productVersion) msiInformation.productVersion = msiProductInfo.productVersion;
+  if (msiProductInfo.upgradeCode) msiInformation.upgradeCode = msiProductInfo.upgradeCode;
+  if (msiProductInfo.productName) msiInformation.productName = msiProductInfo.productName;
+  // The MSI Property table's Manufacturer is the product's publisher -> Graph
+  // msiInformation.publisher ("The MSI publisher").
+  if (msiProductInfo.manufacturer) msiInformation.publisher = msiProductInfo.manufacturer;
+
+  // packageType from the MSI ALLUSERS property, per its documented semantics
+  // (https://learn.microsoft.com/windows/win32/msi/allusers): unset = per-user
+  // context, "1" = per-machine context. ALLUSERS=2 (or any other value) means
+  // the context is decided at install time by user privileges/OS - that does
+  // not deterministically map to one of Graph's perMachine/perUser/dualPurpose
+  // values, so it's flagged instead of guessed.
+  if (msiProductInfo.allUsers === '1') {
+    msiInformation.packageType = 'perMachine';
+  } else if (msiProductInfo.allUsers === null || msiProductInfo.allUsers === undefined) {
+    msiInformation.packageType = 'perUser';
+  } else {
+    needsReview.push(makeReviewItem(
+      'msi_package_type_undetermined',
+      `The MSI's ALLUSERS property is "${msiProductInfo.allUsers}", which defers the per-machine/per-user decision to install time (privileges/OS-dependent per Microsoft's ALLUSERS documentation) - msiInformation.packageType was left unset rather than guessed.`,
+      '/msiInformation/packageType',
+      'conversion',
+    ));
+  }
+
+  return msiInformation;
+}
+
 /**
  * Converts a Phase 2 structured bundle (real ZENworks shape) into a
- * best-effort Intune win32LobApp JSON payload plus a needsReview list. Never
- * throws for real-world content gaps (those become needsReview entries); only
- * throws if the input itself isn't a schema-valid structured bundle, which is
- * a caller/integration bug.
+ * best-effort Intune win32LobApp JSON payload plus a needsReview list.
+ *
+ * options.msiProductInfo (optional): the result of readMsiProductInfo() run
+ * against the bundle's actual MSI installer. When present, it powers the
+ * ProductCode detection rule, msiInformation, and the app-level publisher.
+ * When absent, no detection rule can be derived and that is flagged.
+ *
+ * Never throws for real-world content gaps (those become needsReview
+ * entries); only throws if an input itself is invalid (schema-invalid
+ * structured bundle, malformed productCode), which is a caller/integration
+ * bug rather than a data gap.
  */
-export function convertToIntunePackage(structuredBundle) {
+export function convertToIntunePackage(structuredBundle, options = {}) {
   const { valid, errors } = validateStructuredBundle(structuredBundle);
   if (!valid) {
     throw new Error(`convertToIntunePackage: input is not a valid structured bundle: ${errors.join('; ')}`);
+  }
+
+  const msiProductInfo = options.msiProductInfo ?? null;
+  if (msiProductInfo && !MSI_GUID_PATTERN.test(msiProductInfo.productCode ?? '')) {
+    throw new Error(
+      'convertToIntunePackage: options.msiProductInfo.productCode is not a braced GUID - refusing to build a detection rule from it',
+    );
   }
 
   const needsReview = structuredBundle.needsReview.map((item) => ({ ...item, stage: 'parsing' }));
@@ -279,15 +365,35 @@ export function convertToIntunePackage(structuredBundle) {
   const msiAction = findMsiInstallAction(installSet, needsReview);
   Object.assign(app, buildMsiCommandLines(msiAction, needsReview));
 
-  const requirementRules = buildRequirementRules(structuredBundle.conditions, needsReview);
-  app.rules = requirementRules; // detection rules always absent for now - see module comment
+  // fileName ("the name of the main Lob application file") and setupFilePath
+  // ("the relative path of the setup file in the encrypted Win32LobApp
+  // package", example value is itself a bare .msi name) both come from the
+  // MSIData FileName attribute - the one place the bundle XML names the
+  // installer file. Doc URLs in the module header.
+  if (msiAction?.fields.fileName) {
+    app.fileName = msiAction.fields.fileName;
+    app.setupFilePath = msiAction.fields.fileName;
+  }
 
-  needsReview.push(makeReviewItem(
-    'no_detection_rule_derivable',
-    'No detection rule was generated: MSIData carries FileName/Locale/PackageName/Vendor/Version attributes but no ProductCode, and nothing else in the structured schema deterministically maps to a Win32LobAppFileSystemRule, Win32LobAppRegistryRule, Win32LobAppProductCodeRule, or Win32LobAppPowerShellScriptRule. Intune requires at least one detection rule - add one manually (or via the Phase 4 AI layer\'s suggestion) before creating this app.',
-    '/rules',
-    'conversion',
-  ));
+  const requirementRules = buildRequirementRules(structuredBundle.conditions, needsReview);
+
+  const detectionRules = [];
+  if (msiProductInfo) {
+    detectionRules.push(buildProductCodeDetectionRule(msiProductInfo));
+    app.msiInformation = buildMsiInformation(msiProductInfo, needsReview);
+    // mobileApp.publisher <- the MSI's Manufacturer property (same source as
+    // msiInformation.publisher above).
+    if (msiProductInfo.manufacturer) app.publisher = msiProductInfo.manufacturer;
+  } else {
+    needsReview.push(makeReviewItem(
+      'no_detection_rule_derivable',
+      'No detection rule was generated: the bundle XML carries no ProductCode (MSIData has FileName/Locale/PackageName/Vendor/Version attributes only), and nothing else in the structured schema deterministically maps to a detection rule type. Supply options.msiProductInfo (read from the actual MSI via src/msi/readMsiProductInfo.js, e.g. through the export-directory pipeline) to generate a win32LobAppProductCodeRule, or add a detection rule manually. Intune requires at least one detection rule per Win32 app.',
+      '/rules',
+      'conversion',
+    ));
+  }
+
+  app.rules = [...detectionRules, ...requirementRules];
 
   needsReview.push(makeReviewItem(
     'architecture_signal_unavailable',
