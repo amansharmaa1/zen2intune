@@ -1,52 +1,91 @@
-# Zen2Intune AI Migration Assistant
+# 🔄 Zen2Intune
 
-Zen2Intune helps you migrate application packages from **ZENworks** (Micro Focus /
-OpenText's device management product) to **Microsoft Intune**. You give it a ZENworks
-bundle export (an XML file), and it produces a draft Intune Win32 app package
-(install/uninstall commands, requirement rules, and related fields) as JSON.
+[![Tests](https://github.com/amansharmaa1/zen2intune/actions/workflows/test.yml/badge.svg)](https://github.com/amansharmaa1/zen2intune/actions/workflows/test.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Node.js >= 20](https://img.shields.io/badge/node-%3E%3D20-brightgreen)
 
-**This output is a starting point, not a finished, deployment-ready package.** Some
-fields cannot be filled in automatically from what ZENworks exports and are left
-blank with an explanation instead of a guess. For MSI-based bundles whose export
-includes the installer file, the tool now reads the MSI itself and generates a
-product-code **detection rule** automatically (Windows only); for script-based
-bundles you must still add a detection rule by hand. See
-[NEEDS_REVIEW.md](NEEDS_REVIEW.md) for the full, current list of what's automatic
-and what you'll need to fill in by hand.
+**Migrate application packages from ZENworks to Microsoft Intune — without hand-typing every field.**
 
-## What this tool does not do (yet)
+Zen2Intune takes a **ZENworks bundle export** and produces a draft **Intune Win32 app
+package** (install/uninstall commands, a detection rule, requirement rules, and
+related fields) as JSON. For MSI-based bundles, it reads the installer file itself to
+generate a working detection rule — no guessing at a product code.
 
-- It does **not** upload anything to a live Intune tenant. It only produces a JSON
-  package on your machine - you still create the app in Intune yourself (e.g. via the
-  Microsoft Intune admin center or Graph Explorer).
-- It does **not** generate or run any PowerShell automation for deployment. (It does
-  use two small built-in PowerShell scripts internally, on Windows only, to read
-  MSI file properties.)
-- It does **not** generate detection rules for **script-based** bundles - only for
-  MSI-based bundles whose export directory contains the actual `.msi` file. In every
-  other case you'll need to add at least one detection rule yourself before the app
-  can be deployed.
+> ⚠️ **The output is a strong draft, not a click-to-deploy package.** Some fields have
+> no reliable source in ZENworks data and are left blank on purpose, with an
+> explanation, instead of a fabricated guess. See
+> [**Known Limitations**](docs/known-limitations.md) before you rely on it.
 
-## Prerequisites
+---
 
-- **Node.js version 20 or later.**
-- No account or subscription is required to use the parsing/conversion phases. The
-  optional AI interpretation step requires an Anthropic API key (see below).
+## 📋 Contents
 
-## Installing
+- [What it does](#-what-it-does)
+- [What it doesn't do yet](#-what-it-doesnt-do-yet)
+- [Prerequisites](#-prerequisites)
+- [Installing](#-installing)
+- [Quick start](#-quick-start-convert-a-whole-export-directory)
+- [Step by step](#-step-by-step-the-four-stages)
+- [Running the tests](#-running-the-tests)
+- [Known limitations](#-known-limitations)
+- [Contributing](#-contributing)
+- [License](#-license)
 
-From the project folder, install dependencies:
+---
+
+## ✨ What it does
+
+```mermaid
+flowchart LR
+    A["ZENworks bundle\nexport (XML)"] --> B["Parse"]
+    B --> C["Structured JSON"]
+    C --> D["Convert"]
+    M["MSI installer\n(if present)"] -.->|read ProductCode| D
+    D --> E["Intune win32LobApp\nJSON payload"]
+    C -.->|optional| F["AI interpretation\n(needs your API key)"]
+    F -.->|suggestions only| E
+```
+
+1. **Parse** a ZENworks bundle export (XML) into its install actions, scripts,
+   conditions, and dependencies.
+2. **Normalize** that into a validated, canonical structured representation.
+3. **Convert** it into an Intune Win32 app JSON payload — install/uninstall command
+   lines, requirement rules, and (for MSI bundles with the installer file present) a
+   real detection rule read directly from the MSI's own product code.
+4. **Flag, don't guess.** Anything the tool can't derive with confidence is left out
+   of the payload and listed separately, with a reason.
+5. *(Optional)* **Ask an AI model** for a suggested resolution on flagged items — a
+   suggestion for you to check, never an automatic fix.
+
+## 🚧 What it doesn't do yet
+
+- No live upload to an Intune tenant — you get a JSON file, and you create the app
+  yourself (Intune admin center or Graph Explorer).
+- No detection rule for **script-based** bundles — only MSI-based bundles with the
+  installer file included in the export.
+- No bulk/batch mode — one bundle export directory in, one payload out.
+- No PowerShell deployment automation is generated. (Two small PowerShell scripts
+  *are* used internally, Windows-only, purely to read MSI file properties.)
+
+Full details: **[docs/known-limitations.md](docs/known-limitations.md)**.
+
+## 📋 Prerequisites
+
+- **Node.js 20 or later**
+- No account needed for parsing/conversion. The optional AI step needs your own
+  [Anthropic API key](https://console.anthropic.com/).
+
+## 📦 Installing
 
 ```sh
 npm install
 ```
 
-## The quick path: convert a whole export directory
+## 🚀 Quick start: convert a whole export directory
 
-If you have a full ZENworks bundle export directory (the folder containing the
-bundle's `.xml`, its `_ActionContentInfo.xml` sidecar, and its `_content` folder
-with the installer), one call runs the entire pipeline - including reading the MSI's
-product code for the detection rule (Windows only):
+Point it at a ZENworks bundle export directory (the folder holding the bundle's
+`.xml`, its `_ActionContentInfo.xml` sidecar, and its `_content` folder with the
+installer), and one call runs the entire pipeline:
 
 ```js
 import { writeFileSync } from 'node:fs';
@@ -60,18 +99,16 @@ writeFileSync('intune-app.json', JSON.stringify(app, null, 2));
 writeFileSync('needs-review.json', JSON.stringify(needsReview, null, 2));
 ```
 
-Always read `needs-review.json` afterwards - it lists everything that could not be
-derived and still needs your attention.
+📌 **Always read `needs-review.json` afterwards** — it lists everything that
+couldn't be derived and still needs your attention.
 
-## The step-by-step path: four phases
+## 🔍 Step by step: the four stages
 
-There is currently no packaged command-line tool - each phase is a small function you
-call from a short Node.js script. This section shows exactly how.
+There's no packaged CLI yet — each stage is a small function you call from a short
+Node.js script.
 
-### Phase 1: Parse a ZENworks bundle export
-
-Reads a ZENworks bundle export XML file and pulls out its install actions, scripts,
-conditions, and dependencies into a plain JavaScript object.
+<details>
+<summary><strong>1. Parse a ZENworks bundle export</strong></summary>
 
 ```js
 import { readFileSync } from 'node:fs';
@@ -81,24 +118,22 @@ const xml = readFileSync('my-bundle-export.xml', 'utf8');
 const rawBundle = parseBundleXml(xml);
 ```
 
-If the XML is malformed or missing required fields, `parseBundleXml` throws an error
-rather than guessing - fix the input and re-run.
+Malformed or incomplete XML throws an error rather than guessing — fix the input and
+re-run.
+</details>
 
-### Phase 2: Build the structured JSON
-
-Takes Phase 1's output and turns it into the tool's canonical, validated
-representation of the bundle.
+<details>
+<summary><strong>2. Build the structured JSON</strong></summary>
 
 ```js
 import { normalizeBundle } from './src/schema/normalize.js';
 
 const structuredBundle = normalizeBundle(rawBundle);
 ```
+</details>
 
-### Phase 3: Convert to an Intune Win32 app package
-
-Takes the structured bundle and produces a draft Intune app package, plus a list of
-items that need your attention (`needsReview`).
+<details>
+<summary><strong>3. Convert to an Intune Win32 app package</strong></summary>
 
 ```js
 import { convertToIntunePackage } from './src/intune/convertBundle.js';
@@ -109,35 +144,23 @@ console.log(JSON.stringify(app, null, 2));
 console.log(`${needsReview.length} item(s) need manual review.`);
 ```
 
-Putting phases 1-3 together into one script and writing the result to a file:
+To include a real detection rule for an MSI bundle, pass `msiProductInfo` (see
+`src/msi/readMsiProductInfo.js` — or just use `convertBundleExportDirectory` from the
+[quick start](#-quick-start-convert-a-whole-export-directory), which does this for
+you).
+</details>
 
-```js
-import { readFileSync, writeFileSync } from 'node:fs';
-import { parseBundleXml } from './src/parser/parseBundle.js';
-import { normalizeBundle } from './src/schema/normalize.js';
-import { convertToIntunePackage } from './src/intune/convertBundle.js';
+<details>
+<summary><strong>4. (Optional) AI interpretation</strong></summary>
 
-const xml = readFileSync('my-bundle-export.xml', 'utf8');
-const { app, needsReview } = convertToIntunePackage(normalizeBundle(parseBundleXml(xml)));
+For items in `needsReview`, ask an AI model (Claude) for a suggested resolution and a
+confidence level — a suggestion to check, not an automatic fix.
 
-writeFileSync('intune-app.json', JSON.stringify(app, null, 2));
-writeFileSync('needs-review.json', JSON.stringify(needsReview, null, 2));
-```
-
-### Phase 4 (optional): AI interpretation
-
-For items flagged in `needsReview`, this step asks an AI model (Claude) for a
-suggested resolution and a confidence level - it's a suggestion for you to check, not
-an automatic fix.
-
-**This step requires an Anthropic API key.** Set it as an environment variable before
-running your script:
+Requires an Anthropic API key:
 
 ```sh
 export ANTHROPIC_API_KEY=your-key-here
 ```
-
-Then:
 
 ```js
 import { interpretBundle } from './src/ai/anthropicProvider.js';
@@ -146,31 +169,46 @@ const { annotations } = await interpretBundle(structuredBundle);
 console.log(annotations);
 ```
 
-If `ANTHROPIC_API_KEY` isn't set, this throws an `AiProviderNotConfiguredError`
-instead of returning a made-up answer. This step makes a real call to Anthropic's API,
-which is billed to your account.
+Without `ANTHROPIC_API_KEY` set, this throws `AiProviderNotConfiguredError` rather
+than returning a made-up answer. This step makes a real, billed call to Anthropic's
+API.
+</details>
 
-## Running the test suite
+## 🧪 Running the tests
 
 ```sh
 npm test
 ```
 
-This runs all tests using Node's built-in test runner. To run a single test file:
+Runs the full suite with Node's built-in test runner. To run a single file:
 
 ```sh
 node --test test/parser.test.js
 ```
 
-## Known limitations
+## 📚 Known limitations
 
-This project maintains a running, detailed log of what's verified, what's flagged for
-manual review, and what hasn't been implemented yet, in
-**[NEEDS_REVIEW.md](NEEDS_REVIEW.md)**. Read it before relying on this tool's output -
-it's kept up to date and is more specific than anything summarized here.
+**[docs/known-limitations.md](docs/known-limitations.md)** is the plain-language
+summary of what's not covered yet. For the full technical reasoning, decision
+history, and documentation citations behind each item, see
+[NEEDS_REVIEW.md](NEEDS_REVIEW.md).
 
-## A note on real data
+## 🤝 Contributing
 
-Never commit real ZENworks bundle exports (or any file derived from your actual
-environment) to this repository - only synthetic, fake-valued sample data belongs
-here.
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for how to run
+the tests, the phase/testing discipline this project follows, and the rule that
+**real ZENworks bundle data must never be committed**.
+
+## ⚠️ A note on real data
+
+Never commit real ZENworks bundle exports, MSI files, or any file derived from your
+actual environment to this repository — only synthetic, fake-valued sample data
+belongs here.
+
+## 📄 License
+
+[MIT](LICENSE)
+
+---
+
+*This project was built with AI assistance (Claude / Claude Code).*
