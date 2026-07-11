@@ -1,4 +1,27 @@
+# Dependencies
 node_modules/
+
+# Environment / secrets
 .env
 .env.*
+
+# Logs
 *.log
+
+# Build-tool / AI-agent local config - not project docs, stays local only
+CLAUDE.md
+.claude/
+
+# Conversion output - never commit generated Intune payloads
+output.json
+intune-app.json
+needs-review.json
+
+# Real ZENworks bundle data must never be committed - only synthetic fixtures
+# under test/fixtures/ belong in this repo. If you keep local sample bundles
+# for manual testing, put them outside the repo or under a path like these:
+*.msi
+/local/
+/samples/
+/zenworks-sample-raw/
+/Zentest/
